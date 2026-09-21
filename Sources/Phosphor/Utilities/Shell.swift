@@ -686,17 +686,24 @@ enum Shell {
 
         if let timeout {
             let timeoutTask = Task {
-                let nanoseconds = UInt64(max(timeout, 0) * 1_000_000_000)
-                try? await Task.sleep(nanoseconds: nanoseconds)
-                guard !Task.isCancelled, state.markTimedOut() else { return }
-                DispatchQueue.main.async { onError("Command timed out after \(Int(timeout))s") }
-                await terminateTimedOutTree(processTree, grace: streamTerminationGrace)
-                // The exit handler does not reap once timeout owns completion.
-                // Bounded for the same reason as the runAsync watchdog: an
-                // unkillable child must not strand the streaming completion.
-                reapWithinDeadline(process.processIdentifier, timeout: 1.0)
-                guard !Task.isCancelled else { return }
-                finish(exitCode: -1)
+                let checkInterval: TimeInterval = min(max(timeout / 4.0, 0.05), 15.0)
+                let checkNano = UInt64(checkInterval * 1_000_000_000)
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: checkNano)
+                    if Task.isCancelled || state.hasFinished() { return }
+                    if state.timeSinceLastActivity() >= timeout {
+                        guard state.markTimedOut() else { return }
+                        DispatchQueue.main.async { onError("Command timed out after \(Int(timeout))s of inactivity") }
+                        await terminateTimedOutTree(processTree, grace: streamTerminationGrace)
+                        // The exit handler does not reap once timeout owns completion.
+                        // Bounded for the same reason as the runAsync watchdog: an
+                        // unkillable child must not strand the streaming completion.
+                        reapWithinDeadline(process.processIdentifier, timeout: 1.0)
+                        guard !Task.isCancelled else { return }
+                        finish(exitCode: -1)
+                        return
+                    }
+                }
             }
             state.setTimeoutTask(timeoutTask)
         }
