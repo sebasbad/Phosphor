@@ -517,13 +517,25 @@ final class BackupViewModel: ObservableObject {
             activity.progressText = text
             activity.isAwaitingPasscode = awaitingPasscode
             if let details = PyMobileDevice.parseProgressDetails(from: text) {
-                activity.progressFraction = details.fraction
+                // Ignore transient sub-phase 100% resets unless truly completing
+                if details.fraction >= 0.99 && activity.progressFraction ?? 0 < 0.85 {
+                    // Transient 100% on metadata preparation phase - do not jump UI to 100%
+                } else {
+                    let current = activity.progressFraction ?? 0.0
+                    activity.progressFraction = max(current, details.fraction)
+                }
                 if let eta = details.eta { activity.eta = eta }
                 if let speed = details.speed { activity.speed = speed }
             } else if let pct = PyMobileDevice.parseProgress(from: text) {
-                activity.progressFraction = pct
+                if pct >= 0.99 && activity.progressFraction ?? 0 < 0.85 {
+                    // Transient subphase
+                } else {
+                    let current = activity.progressFraction ?? 0.0
+                    activity.progressFraction = max(current, pct)
+                }
             } else if manager.backupPercent > 0 {
-                activity.progressFraction = manager.backupPercent
+                let current = activity.progressFraction ?? 0.0
+                activity.progressFraction = max(current, manager.backupPercent)
             }
         }
         refreshLegacyProgressState()

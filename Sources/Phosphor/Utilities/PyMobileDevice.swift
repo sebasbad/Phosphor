@@ -1022,7 +1022,7 @@ enum PyMobileDevice {
             if parts.count == 2 {
                 eta = "\(parts[0])m \(parts[1])s"
             } else if parts.count == 3 {
-                eta = "\(parts[0])h \(parts[1])m"
+                eta = "\(parts[0])h \(parts[1])m \(parts[2])s"
             } else {
                 eta = rawEta
             }

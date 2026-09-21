@@ -915,8 +915,8 @@ final class BackupManager: ObservableObject {
                     // pymobiledevice3 sends progress on stderr.
                     if let pct = PyMobileDevice.parseProgress(from: trimmed) {
                         self?.backupPercent = pct
-                        self?.backupProgress = "Backup: \(Int(pct * 100))%"
-                        onProgress("Backing up \(Int(pct * 100))%")
+                        self?.backupProgress = trimmed
+                        onProgress(trimmed)
                         return
                     }
                     // Retain non-progress stderr lines so a failure surfaces the real reason.
