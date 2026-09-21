@@ -172,6 +172,9 @@ final class BackupManager: ObservableObject {
             Only if you specifically want Phosphor to read Apple's shared MobileSync backups do you need to grant Full Disk Access (System Settings -> Privacy & Security -> Full Disk Access). Full Disk Access is not recommended - Phosphor does not need it for its own backups.
             """, .openBackupSettings)
         }
+        if lower.contains("timed out") {
+            return ("Backup operation timed out. For large backups, ensure a stable high-speed USB connection and keep the device awake.", .retry)
+        }
         return (nil, nil)
     }
 
@@ -840,6 +843,34 @@ final class BackupManager: ObservableObject {
         }
 
         let pymobiledeviceStderr = pymobiledeviceStderrTail.joined(separator: "\n")
+        let lowerStderr = pymobiledeviceStderr.lowercased()
+
+        // If pymobiledevice3 timed out or failed due to passcode/pairing dismissal or RemoteXPC/iOS17+ requirement,
+        // do not fall back into idevicebackup2 which cannot succeed and risks locking USB/lockdownd.
+        let shouldInhibitFallback = lowerStderr.contains("timed out")
+            || lowerStderr.contains("remotexpc")
+            || lowerStderr.contains("invalidservice")
+            || lowerStderr.contains("passcodesetuprequired")
+
+        if shouldInhibitFallback {
+            finishOperation(operationID)
+            backupProgress = "Backup failed"
+            let primaryMessage = lowerStderr.contains("timed out")
+                ? "Backup timed out."
+                : "Backup failed via pymobiledevice3."
+            let failure = Self.backupFailure(
+                primary: primaryMessage,
+                stderr: pymobiledeviceStderr,
+                udid: udid,
+                recoveryPath: Self.backupPath(for: udid, in: backupRoot)
+            )
+            self.lastBackupFailure = failure
+            self.lastError = Self.composeFailureMessage(
+                primary: primaryMessage,
+                stderr: pymobiledeviceStderr
+            )
+            return false
+        }
 
         // Fallback: idevicebackup2
         backupProgress = "Backing up..."
@@ -1112,6 +1143,35 @@ final class BackupManager: ObservableObject {
         }
 
         let pymobiledeviceStderr = pymobiledeviceStderrTail.joined(separator: "\n")
+        let lowerStderr = pymobiledeviceStderr.lowercased()
+
+        // If pymobiledevice3 timed out or failed due to passcode/pairing dismissal or RemoteXPC/iOS17+ requirement,
+        // do not fall back into idevicebackup2 which cannot succeed and risks locking USB/lockdownd.
+        let shouldInhibitFallback = lowerStderr.contains("timed out")
+            || lowerStderr.contains("remotexpc")
+            || lowerStderr.contains("invalidservice")
+            || lowerStderr.contains("passcodesetuprequired")
+
+        if shouldInhibitFallback {
+            finishOperation(operationID)
+            backupProgress = "Backup failed"
+            let primaryMessage = lowerStderr.contains("timed out")
+                ? "Incremental backup timed out."
+                : "Incremental backup failed via pymobiledevice3."
+            let failure = Self.backupFailure(
+                primary: primaryMessage,
+                stderr: pymobiledeviceStderr,
+                udid: udid,
+                recoveryPath: Self.backupPath(for: udid, in: backupRoot)
+            )
+            self.lastBackupFailure = failure
+            self.lastError = Self.composeFailureMessage(
+                primary: primaryMessage,
+                stderr: pymobiledeviceStderr
+            )
+            return false
+        }
+
         var idevicebackupStderr = ""
 
         // Fallback: idevicebackup2
