@@ -361,9 +361,58 @@ struct BackupListView: View {
                 .foregroundStyle(.primary)
 
             if let stats = cachedIncompleteStats {
-                Text("\(stats.fileCount.formatted()) files saved (\(stats.formattedSize)) • Paused \(stats.relativeTimeDescription)")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.primary.opacity(0.85))
+                let fraction = stats.completionFraction(for: device)
+                let remaining = stats.remainingBytes(for: device)
+                let eta = stats.estimatedResumeTime(for: device)
+
+                VStack(spacing: 8) {
+                    // Header progress metrics: % completed and remaining data
+                    HStack(spacing: 6) {
+                        if let fraction {
+                            Text("\(Int(fraction * 100))% saved")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Color.orange)
+                        } else {
+                            Text("?% saved")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Text("•")
+                            .foregroundStyle(.secondary)
+
+                        if let remaining {
+                            Text("\(remaining.formattedFileSize) remaining")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("? remaining")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if let eta {
+                            Text("•")
+                                .foregroundStyle(.secondary)
+                            Text("Est. \(eta)")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    // Progress bar
+                    if let fraction {
+                        ProgressView(value: fraction, total: 1.0)
+                            .progressViewStyle(.linear)
+                            .tint(Color.orange)
+                            .frame(maxWidth: 320)
+                    }
+
+                    // Saved file count, total saved size, and paused time
+                    Text("\(stats.fileCount.formatted()) files saved (\(stats.formattedSize)) • Paused \(stats.relativeTimeDescription)")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary.opacity(0.85))
+                }
             } else if isLoadingIncompleteStats {
                 HStack(spacing: 6) {
                     ProgressView().scaleEffect(0.7)

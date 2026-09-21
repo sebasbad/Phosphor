@@ -525,6 +525,58 @@ final class BackupManager: ObservableObject {
             formatter.unitsStyle = .full
             return formatter.localizedString(for: lastModified, relativeTo: Date())
         }
+
+        /// Calculate completion percentage against target device used storage.
+        /// Returns nil if device storage capacity is unknown (retrocompatible).
+        func completionFraction(for device: DeviceInfo?) -> Double? {
+            guard let device else { return nil }
+            // If device total & available disk space are reported from lockdown
+            if let total = device.totalDiskCapacity, let available = device.availableDiskSpace, total > available {
+                let used = total - available
+                if used > 0 {
+                    let fraction = Double(totalBytes) / Double(used)
+                    return min(max(fraction, 0.01), 0.99)
+                }
+            }
+            // Fallback to totalDataCapacity if available
+            if let totalData = device.totalDataCapacity, totalData > 0 {
+                let fraction = Double(totalBytes) / Double(totalData)
+                return min(max(fraction, 0.01), 0.99)
+            }
+            return nil
+        }
+
+        /// Calculate remaining payload bytes against target device used storage.
+        /// Returns nil if device storage capacity is unknown.
+        func remainingBytes(for device: DeviceInfo?) -> UInt64? {
+            guard let device else { return nil }
+            if let total = device.totalDiskCapacity, let available = device.availableDiskSpace, total > available {
+                let used = total - available
+                return used > totalBytes ? (used - totalBytes) : 0
+            }
+            if let totalData = device.totalDataCapacity, totalData > totalBytes {
+                return totalData - totalBytes
+            }
+            return nil
+        }
+
+        /// Estimated time to resume remaining data based on connection type.
+        /// USB ~35 MB/s, Wi-Fi ~10 MB/s. Returns nil if remaining bytes are unknown.
+        func estimatedResumeTime(for device: DeviceInfo?) -> String? {
+            guard let remaining = remainingBytes(for: device), remaining > 0 else { return nil }
+            let bytesPerSec: Double = (device?.connectionType == .wifi) ? 10_000_000 : 35_000_000
+            let seconds = Int(Double(remaining) / bytesPerSec)
+            if seconds < 60 {
+                return "~1m"
+            } else if seconds < 3600 {
+                let m = max(1, seconds / 60)
+                return "~\(m)m"
+            } else {
+                let h = seconds / 3600
+                let m = (seconds % 3600) / 60
+                return m > 0 ? "~\(h)h \(m)m" : "~\(h)h"
+            }
+        }
     }
 
     /// Fast inspect statistics of an interrupted/saved backup folder.
