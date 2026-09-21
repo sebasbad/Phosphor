@@ -411,6 +411,21 @@ struct DeviceOverviewView: View {
 
             if let activity = backupVM.activity(for: device.id), activity.isActive {
                 VStack(alignment: .leading, spacing: 8) {
+                    if activity.isAwaitingPasscode {
+                        HStack(spacing: 8) {
+                            Image(systemName: "lock.shield.fill")
+                                .foregroundStyle(.orange)
+                                .font(.system(size: 14, weight: .semibold))
+                            Text("Please unlock your device and enter your passcode or tap 'Trust' to proceed...")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.orange)
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 8)
+                        .background(Color.orange.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+
                     HStack {
                         Text(activity.displayProgressText)
                             .font(.caption.weight(.medium))
@@ -430,7 +445,7 @@ struct DeviceOverviewView: View {
                         total: 1.0
                     )
                         .progressViewStyle(.linear)
-                        .tint(.brandAccent)
+                        .tint(activity.isAwaitingPasscode ? .orange : .brandAccent)
 
                     Text("Progress is saved automatically. You can resume later.")
                         .font(.caption2)

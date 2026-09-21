@@ -23,6 +23,7 @@ final class BackupViewModel: ObservableObject {
         var speed: String?
         var isResume: Bool = false
         var resumeBaselineFraction: Double = 0.0
+        var isAwaitingPasscode: Bool = false
         var errorMessage: String?
 
         var isActive: Bool {
@@ -505,8 +506,11 @@ final class BackupViewModel: ObservableObject {
     }
 
     private func updateBackupProgress(udid: String, text: String, manager: BackupManager) {
+        let lower = text.lowercased()
+        let awaitingPasscode = lower.contains("passcode") || lower.contains("pin") || lower.contains("trust") || lower.contains("unlock")
         updateActivity(udid: udid) { activity in
             activity.progressText = text
+            activity.isAwaitingPasscode = awaitingPasscode
             if let details = PyMobileDevice.parseProgressDetails(from: text) {
                 activity.progressFraction = details.fraction
                 if let eta = details.eta { activity.eta = eta }

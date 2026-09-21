@@ -18,6 +18,8 @@ struct BackupListView: View {
     @State private var pendingFullWiFiBackupPrefersNetwork = false
     @State private var showIncompleteBackupTrashConfirm = false
     @State private var pendingIncompleteBackupIssue: BackupManager.BackupFailure?
+    @State private var cachedIncompleteStats: BackupManager.IncompleteBackupStats?
+    @State private var isLoadingIncompleteStats = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -341,7 +343,6 @@ struct BackupListView: View {
 
     @ViewBuilder
     private func resumableBackupHeroCard(for device: DeviceInfo) -> some View {
-        let stats = BackupManager.incompleteBackupStats(for: device.id)
         VStack(spacing: 16) {
             ZStack {
                 Circle()
@@ -363,10 +364,17 @@ struct BackupListView: View {
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(.primary)
 
-            if let stats {
+            if let stats = cachedIncompleteStats {
                 Text("\(stats.fileCount.formatted()) files saved (\(stats.formattedSize)) • Paused \(stats.relativeTimeDescription)")
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.primary.opacity(0.85))
+            } else if isLoadingIncompleteStats {
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.7)
+                    Text("Checking saved files...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Text("Phosphor will verify cached files and continue downloading remaining data without starting over.")
@@ -404,6 +412,20 @@ struct BackupListView: View {
             .padding(.top, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: device.id) {
+            await loadIncompleteStatsInBackground(for: device.id)
+        }
+    }
+
+    private func loadIncompleteStatsInBackground(for udid: String) async {
+        isLoadingIncompleteStats = true
+        let stats = await Task.detached(priority: .utility) {
+            BackupManager.incompleteBackupStats(for: udid)
+        }.value
+        if !Task.isCancelled {
+            cachedIncompleteStats = stats
+            isLoadingIncompleteStats = false
+        }
     }
 
     private var emptyStateBackupActionLabel: String? {
@@ -547,13 +569,28 @@ struct BackupListView: View {
                         .accessibilityLabel("Cancel backup for \(deviceIdentity(for: activity.udid))")
                     }
                     if case .running = activity.state {
+                        if activity.isAwaitingPasscode {
+                            HStack(spacing: 8) {
+                                Image(systemName: "lock.shield.fill")
+                                    .foregroundStyle(.orange)
+                                    .font(.system(size: 14, weight: .semibold))
+                                Text("Please unlock your device and enter your passcode or tap 'Trust' to proceed...")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(.orange)
+                            }
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 8)
+                            .background(Color.orange.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                        }
+
                         VStack(alignment: .leading, spacing: 4) {
                             ProgressView(
                                 value: activity.displayProgressFraction,
                                 total: 1.0
                             )
                             .progressViewStyle(.linear)
-                            .tint(.brandAccent)
+                            .tint(activity.isAwaitingPasscode ? .orange : .brandAccent)
 
                             Text("Progress is saved automatically. You can stop or unplug and resume later.")
                                 .font(.system(size: 10))

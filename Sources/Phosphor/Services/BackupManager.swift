@@ -262,23 +262,23 @@ final class BackupManager: ObservableObject {
     /// Phosphor's default backup location: inside ~/Documents so no special permission
     /// grant is needed, and so Phosphor never shares a directory with Finder's backups
     /// (a misbehaving run could otherwise corrupt the user's Finder backups).
-    static let defaultBackupDir: String = {
+    nonisolated static let defaultBackupDir: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/Documents/Phosphor Backups"
     }()
 
     /// Apple's MobileSync directory. Kept as a named constant so settings UI and
     /// migration logic can offer it to users who explicitly opt in.
-    static let systemMobileSyncDir: String = {
+    nonisolated static let systemMobileSyncDir: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return "\(home)/Library/Application Support/MobileSync/Backup"
     }()
 
     /// UserDefaults key for the active backup directory.
-    static let backupDirectoryUserDefaultsKey = "phosphor.backupDirectory"
+    nonisolated static let backupDirectoryUserDefaultsKey = "phosphor.backupDirectory"
 
     /// Active backup directory. Falls back to the default when no override is set.
-    static var activeBackupDir: String {
+    nonisolated static var activeBackupDir: String {
         let custom = UserDefaults.standard.string(forKey: backupDirectoryUserDefaultsKey)
         if let custom, !custom.isEmpty {
             return custom
@@ -405,7 +405,7 @@ final class BackupManager: ObservableObject {
                (isNonEmptyFile(manifestPlist) || isNonEmptyFile(manifestDb))
     }
 
-    static func backupPath(for udid: String, in directory: String? = nil) -> String {
+    nonisolated static func backupPath(for udid: String, in directory: String? = nil) -> String {
         let rootDirectory = directory ?? activeBackupDir
         return (rootDirectory as NSString).appendingPathComponent(udid)
     }
@@ -528,7 +528,7 @@ final class BackupManager: ObservableObject {
     }
 
     /// Fast inspect statistics of an interrupted/saved backup folder.
-    static func incompleteBackupStats(for udid: String, in directory: String? = nil) -> IncompleteBackupStats? {
+    nonisolated static func incompleteBackupStats(for udid: String, in directory: String? = nil) -> IncompleteBackupStats? {
         let fm = FileManager.default
         let path = backupPath(for: udid, in: directory)
         var isDir: ObjCBool = false
