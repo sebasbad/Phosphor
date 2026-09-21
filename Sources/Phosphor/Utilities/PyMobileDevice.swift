@@ -188,6 +188,7 @@ enum PyMobileDevice {
 
         var environment = ProcessInfo.processInfo.environment
         environment["PATH"] = extendedPath
+        environment["PYTHONUNBUFFERED"] = "1"
         return Shell.runStreaming(
             cmd.cmd,
             arguments: cmd.args,
