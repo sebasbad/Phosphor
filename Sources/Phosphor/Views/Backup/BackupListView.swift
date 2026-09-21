@@ -61,14 +61,21 @@ struct BackupListView: View {
 
             if backupVM.backups.isEmpty {
                 EmptyStateView(
-                    icon: "externaldrive",
-                    title: "No Backups Found",
-                    subtitle: "Back up your device, or pick an existing backup folder via New Backup -> Open Existing Backup Folder.",
+                    icon: (deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true) ? "pause.circle.fill" : "externaldrive",
+                    title: (deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true) ? "Interrupted Backup Found" : "No Backups Found",
+                    subtitle: (deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true)
+                        ? "A previous backup did not finish, but downloaded data was saved. You can resume transferring where it left off."
+                        : "Back up your device, or pick an existing backup folder via New Backup -> Open Existing Backup Folder.",
                     action: {
                         guard let device = deviceVM.selectedDevice else { return }
-                        startBackup(for: device, incremental: shouldOfferIncremental(for: device))
+                        if hasResumableBackup(for: device) {
+                            Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi) }
+                        } else {
+                            startBackup(for: device, incremental: shouldOfferIncremental(for: device))
+                        }
                     },
-                    actionLabel: emptyStateBackupActionLabel
+                    actionLabel: emptyStateBackupActionLabel,
+                    color: (deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true) ? .orange : .brandAccent
                 )
             } else {
                 List {
@@ -222,7 +229,23 @@ struct BackupListView: View {
         }
     }
 
+    private func hasResumableBackup(for device: DeviceInfo) -> Bool {
+        if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: device.id) {
+            return BackupManager.incompleteBackupHasPayloadData(path)
+        }
+        return false
+    }
+
     private func backupState(for device: DeviceInfo) -> (title: String, detail: String, icon: String, tint: Color) {
+        if hasResumableBackup(for: device) {
+            return (
+                "Interrupted backup found",
+                "Saved files from your previous backup were preserved. Resume will continue transferring where it left off.",
+                "pause.circle.fill",
+                .orange
+            )
+        }
+
         let hasCompleteBackup = shouldOfferIncremental(for: device)
         if device.connectionType == .wifi {
             if hasCompleteBackup {
@@ -251,6 +274,17 @@ struct BackupListView: View {
 
     @ViewBuilder
     private var backupCreationButtons: some View {
+        if let device = deviceVM.selectedDevice, hasResumableBackup(for: device) {
+            Button {
+                Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi) }
+            } label: {
+                Label("Resume Saved Backup", systemImage: "play.circle.fill")
+            }
+            .disabled(deviceVM.selectedDevice == nil)
+
+            Divider()
+        }
+
         if deviceVM.selectedDevice?.connectionType == .wifi {
             if let device = deviceVM.selectedDevice, shouldOfferIncremental(for: device) {
                 Button {
@@ -298,6 +332,9 @@ struct BackupListView: View {
 
     private var emptyStateBackupActionLabel: String? {
         guard let device = deviceVM.selectedDevice else { return nil }
+        if hasResumableBackup(for: device) {
+            return "Resume Backup"
+        }
         if device.connectionType == .wifi {
             return shouldOfferIncremental(for: device) ? "Create Incremental Wi-Fi Backup" : "Create Full Wi-Fi Backup"
         }
@@ -424,8 +461,10 @@ struct BackupListView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("\(deviceIdentity(for: activity.udid)), \(activity.displayProgressText)")
                         Spacer()
-                        Button("Cancel") {
+                        Button {
                             backupVM.cancelBackup(udid: activity.udid)
+                        } label: {
+                            Label("Pause & Save", systemImage: "pause.circle")
                         }
                         .controlSize(.small)
                         .help("Stops the backup and saves progress. You can resume later.")
