@@ -601,7 +601,7 @@ struct BackupListView: View {
             ForEach(activeBackupActivities) { activity in
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
-                        Image(systemName: activity.state == .running ? "externaldrive.badge.timemachine" : "clock")
+                        Image(systemName: activity.state == .running ? (activity.isFinalizing ? "arrow.triangle.2.circlepath.circle.fill" : "externaldrive.badge.timemachine") : "clock")
                             .foregroundStyle(Color.brandAccent)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(deviceIdentity(for: activity.udid))
@@ -640,14 +640,20 @@ struct BackupListView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 4) {
-                            ProgressView(
-                                value: activity.displayProgressFraction,
-                                total: 1.0
-                            )
-                            .progressViewStyle(.linear)
-                            .tint(activity.isAwaitingPasscode ? .orange : .brandAccent)
+                            if activity.isFinalizing {
+                                ProgressView()
+                                    .progressViewStyle(.linear)
+                                    .tint(.brandAccent)
+                            } else {
+                                ProgressView(
+                                    value: activity.displayProgressFraction,
+                                    total: 1.0
+                                )
+                                .progressViewStyle(.linear)
+                                .tint(activity.isAwaitingPasscode ? .orange : .brandAccent)
+                            }
 
-                            Text("Progress is saved automatically. You can stop or unplug and resume later.")
+                            Text(activity.isFinalizing ? "Consolidating files and sealing backup manifest on disk..." : "Progress is saved automatically. You can stop or unplug and resume later.")
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
                         }

@@ -33,6 +33,13 @@ final class BackupViewModel: ObservableObject {
             }
         }
 
+        var isFinalizing: Bool {
+            if case .running = state {
+                return displayProgressFraction >= 0.99
+            }
+            return false
+        }
+
         var displayProgressText: String {
             switch state {
             case .queued(let position): return "Queued · #\(position)"
