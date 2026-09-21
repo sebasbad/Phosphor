@@ -39,7 +39,9 @@ final class BackupViewModel: ObservableObject {
             case .running:
                 let pct = Int(displayProgressFraction * 100)
                 var components: [String] = []
-                if isResume {
+                if pct >= 99 {
+                    components.append("Finalizing backup \(pct)%")
+                } else if isResume && displayProgressFraction <= (resumeBaselineFraction + 0.05) {
                     components.append("Resuming \(pct)%")
                 } else {
                     components.append("Backing up \(pct)%")
