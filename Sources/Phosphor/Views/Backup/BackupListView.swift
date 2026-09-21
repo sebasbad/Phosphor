@@ -361,9 +361,13 @@ struct BackupListView: View {
                 .foregroundStyle(.primary)
 
             if let stats = cachedIncompleteStats {
-                let fraction = stats.completionFraction(for: device)
+                let activity = backupVM.activity(for: device.id)
+                let activityFraction = activity?.displayProgressFraction
+                let calculatedFraction = stats.completionFraction(for: device)
+                let fraction = activityFraction ?? calculatedFraction ?? (stats.totalBytes > 1_000_000_000 ? min(Double(stats.totalBytes) / 70_000_000_000.0, 0.95) : nil)
+
                 let remaining = stats.remainingBytes(for: device)
-                let eta = stats.estimatedResumeTime(for: device)
+                let eta = activity?.eta ?? stats.estimatedResumeTime(for: device)
 
                 VStack(spacing: 8) {
                     // Header progress metrics: % completed and remaining data
@@ -385,13 +389,19 @@ struct BackupListView: View {
                             Text("\(remaining.formattedFileSize) remaining")
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(.secondary)
+                        } else if let fraction, fraction > 0, fraction < 1.0 {
+                            let totalEst = Double(stats.totalBytes) / fraction
+                            let remBytes = UInt64(max(totalEst - Double(stats.totalBytes), 0))
+                            Text("~\(remBytes.formattedFileSize) remaining")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.secondary)
                         } else {
                             Text("? remaining")
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(.secondary)
                         }
 
-                        if let eta {
+                        if let eta, !eta.isEmpty {
                             Text("•")
                                 .foregroundStyle(.secondary)
                             Text("Est. \(eta)")
