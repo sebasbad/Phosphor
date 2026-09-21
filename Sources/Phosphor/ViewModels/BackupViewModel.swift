@@ -19,6 +19,10 @@ final class BackupViewModel: ObservableObject {
         var state: State
         var progressText: String
         var progressFraction: Double?
+        var eta: String?
+        var speed: String?
+        var isResume: Bool = false
+        var resumeBaselineFraction: Double = 0.0
         var errorMessage: String?
 
         var isActive: Bool {
@@ -32,8 +36,20 @@ final class BackupViewModel: ObservableObject {
             switch state {
             case .queued(let position): return "Queued · #\(position)"
             case .running:
-                guard let progressFraction else { return "Backing up" }
-                return "Backing up \(Int(progressFraction * 100))%"
+                let pct = Int(displayProgressFraction * 100)
+                var components: [String] = []
+                if isResume {
+                    components.append("Resuming \(pct)%")
+                } else {
+                    components.append("Backing up \(pct)%")
+                }
+                if let speed, !speed.isEmpty {
+                    components.append(speed)
+                }
+                if let eta, !eta.isEmpty {
+                    components.append("ETA: \(eta)")
+                }
+                return components.joined(separator: " · ")
             case .completed: return "Completed"
             case .failed: return "Failed"
             case .cancelled: return "Cancelled"
@@ -41,8 +57,16 @@ final class BackupViewModel: ObservableObject {
         }
 
         var displayProgressFraction: Double {
-            guard let progressFraction else { return 0.05 }
-            return min(max(progressFraction, 0.05), 1)
+            guard let progressFraction else {
+                return resumeBaselineFraction > 0 ? resumeBaselineFraction : 0.05
+            }
+            if isResume && resumeBaselineFraction > 0 {
+                // Compute progress over total: baseline + remaining * sessionFraction
+                let remainingFraction = 1.0 - resumeBaselineFraction
+                let totalFraction = resumeBaselineFraction + (remainingFraction * progressFraction)
+                return min(max(totalFraction, resumeBaselineFraction), 1.0)
+            }
+            return min(max(progressFraction, 0.05), 1.0)
         }
     }
 
@@ -336,9 +360,29 @@ final class BackupViewModel: ObservableObject {
 
         let manager = BackupManager()
         backupManagers[udid] = manager
+        let isResume = request.isResume
+        var baselineFraction: Double = 0.0
+        if isResume {
+            if let stats = BackupManager.incompleteBackupStats(for: udid) {
+                // If we have saved files, estimate baseline between 5% and 50% based on payload size
+                // (typically an interrupted backup has already done a substantial portion)
+                if stats.totalBytes > 1_000_000_000 {
+                    baselineFraction = min(Double(stats.totalBytes) / 50_000_000_000.0, 0.40)
+                    baselineFraction = max(baselineFraction, 0.10)
+                } else if stats.fileCount > 5000 {
+                    baselineFraction = 0.10
+                } else {
+                    baselineFraction = 0.05
+                }
+            } else {
+                baselineFraction = 0.05
+            }
+        }
         updateActivity(udid: udid) {
             $0.state = .running
-            $0.progressText = "Preparing..."
+            $0.isResume = isResume
+            $0.resumeBaselineFraction = baselineFraction
+            $0.progressText = isResume ? "Resuming..." : "Preparing..."
         }
         refreshLegacyProgressState()
 
@@ -463,7 +507,11 @@ final class BackupViewModel: ObservableObject {
     private func updateBackupProgress(udid: String, text: String, manager: BackupManager) {
         updateActivity(udid: udid) { activity in
             activity.progressText = text
-            if let pct = PyMobileDevice.parseProgress(from: text) {
+            if let details = PyMobileDevice.parseProgressDetails(from: text) {
+                activity.progressFraction = details.fraction
+                if let eta = details.eta { activity.eta = eta }
+                if let speed = details.speed { activity.speed = speed }
+            } else if let pct = PyMobileDevice.parseProgress(from: text) {
                 activity.progressFraction = pct
             } else if manager.backupPercent > 0 {
                 activity.progressFraction = manager.backupPercent

@@ -510,6 +510,62 @@ final class BackupManager: ObservableObject {
         return false
     }
 
+    struct IncompleteBackupStats {
+        let fileCount: Int
+        let totalBytes: UInt64
+        let lastModified: Date?
+
+        var formattedSize: String {
+            totalBytes.formattedFileSize
+        }
+
+        var relativeTimeDescription: String {
+            guard let lastModified else { return "recently" }
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .full
+            return formatter.localizedString(for: lastModified, relativeTo: Date())
+        }
+    }
+
+    /// Fast inspect statistics of an interrupted/saved backup folder.
+    static func incompleteBackupStats(for udid: String, in directory: String? = nil) -> IncompleteBackupStats? {
+        let fm = FileManager.default
+        let path = backupPath(for: udid, in: directory)
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
+
+        let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
+        let targetDir = fm.fileExists(atPath: snapshotPath, isDirectory: &isDir) && isDir.boolValue ? snapshotPath : path
+
+        var count = 0
+        var totalBytes: UInt64 = 0
+        var latestDate: Date?
+
+        guard let subdirs = try? fm.contentsOfDirectory(atPath: targetDir) else { return nil }
+        for sub in subdirs where sub.count == 2 || sub.count == 40 {
+            let subPath = (targetDir as NSString).appendingPathComponent(sub)
+            if let files = try? fm.contentsOfDirectory(atPath: subPath) {
+                count += files.count
+                for file in files {
+                    let filePath = (subPath as NSString).appendingPathComponent(file)
+                    if let attrs = try? fm.attributesOfItem(atPath: filePath) {
+                        if let size = attrs[.size] as? UInt64 {
+                            totalBytes += size
+                        }
+                        if let mod = attrs[.modificationDate] as? Date {
+                            if latestDate == nil || mod > latestDate! {
+                                latestDate = mod
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        guard count > 0 || totalBytes > 0 else { return nil }
+        return IncompleteBackupStats(fileCount: count, totalBytes: totalBytes, lastModified: latestDate)
+    }
+
     /// Sanitize an interrupted backup folder before resuming to prevent com.apple.mobilebackup2
     /// and idevicebackup2 / pymobiledevice3 from failing with MBErrorDomain/205 ("cannot parse null plist").
     /// - Checks and cleans up 0-byte or corrupted plist stubs (Status.plist, Info.plist).

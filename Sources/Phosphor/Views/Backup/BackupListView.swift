@@ -60,23 +60,21 @@ struct BackupListView: View {
             }
 
             if backupVM.backups.isEmpty {
-                EmptyStateView(
-                    icon: (deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true) ? "pause.circle.fill" : "externaldrive",
-                    title: (deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true) ? "Interrupted Backup Found" : "No Backups Found",
-                    subtitle: (deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true)
-                        ? "A previous backup did not finish, but downloaded data was saved. You can resume transferring where it left off."
-                        : "Back up your device, or pick an existing backup folder via New Backup -> Open Existing Backup Folder.",
-                    action: {
-                        guard let device = deviceVM.selectedDevice else { return }
-                        if hasResumableBackup(for: device) {
-                            Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi) }
-                        } else {
+                if let device = deviceVM.selectedDevice, hasResumableBackup(for: device) {
+                    resumableBackupHeroCard(for: device)
+                } else {
+                    EmptyStateView(
+                        icon: "externaldrive",
+                        title: "No Backups Found",
+                        subtitle: "Back up your device, or pick an existing backup folder via New Backup -> Open Existing Backup Folder.",
+                        action: {
+                            guard let device = deviceVM.selectedDevice else { return }
                             startBackup(for: device, incremental: shouldOfferIncremental(for: device))
-                        }
-                    },
-                    actionLabel: emptyStateBackupActionLabel,
-                    color: (deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true) ? .orange : .brandAccent
-                )
+                        },
+                        actionLabel: emptyStateBackupActionLabel,
+                        color: .brandAccent
+                    )
+                }
             } else {
                 List {
                     ForEach(backupVM.backups) { backup in
@@ -161,7 +159,8 @@ struct BackupListView: View {
     }
 
     private var newBackupMenu: some View {
-        Menu {
+        let isResumable = deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true
+        return Menu {
             backupCreationButtons
 
             Divider()
@@ -186,7 +185,12 @@ struct BackupListView: View {
                 Label("Schedule Backups...", systemImage: "clock")
             }
         } label: {
-            Label("New Backup", systemImage: "plus")
+            if isResumable {
+                Label("Resume Backup", systemImage: "play.circle.fill")
+                    .foregroundStyle(Color.orange)
+            } else {
+                Label("New Backup", systemImage: "plus")
+            }
         }
     }
 
@@ -222,10 +226,15 @@ struct BackupListView: View {
     @ViewBuilder
     private var backupStateNotice: some View {
         if let device = deviceVM.selectedDevice {
-            let state = backupState(for: device)
-            BackupStateNotice(title: state.title, detail: state.detail, icon: state.icon, tint: state.tint)
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
+            // Suppress banner notice when the empty state already acts as the dedicated resumable hero card
+            if backupVM.backups.isEmpty && hasResumableBackup(for: device) {
+                EmptyView()
+            } else {
+                let state = backupState(for: device)
+                BackupStateNotice(title: state.title, detail: state.detail, icon: state.icon, tint: state.tint)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
+            }
         }
     }
 
@@ -328,6 +337,73 @@ struct BackupListView: View {
             }
             .disabled(deviceVM.selectedDevice == nil)
         }
+    }
+
+    @ViewBuilder
+    private func resumableBackupHeroCard(for device: DeviceInfo) -> some View {
+        let stats = BackupManager.incompleteBackupStats(for: device.id)
+        VStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.orange.opacity(0.22), Color.orange.opacity(0.06)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: 92, height: 92)
+                Image(systemName: "pause.circle.fill")
+                    .font(.system(size: 40, weight: .light))
+                    .foregroundStyle(Color.orange)
+            }
+            .padding(.bottom, 2)
+
+            Text("Backup Paused for \(device.name)")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.primary)
+
+            if let stats {
+                Text("\(stats.fileCount.formatted()) files saved (\(stats.formattedSize)) • Paused \(stats.relativeTimeDescription)")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary.opacity(0.85))
+            }
+
+            Text("Phosphor will verify cached files and continue downloading remaining data without starting over.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 380)
+
+            HStack(spacing: 12) {
+                Button {
+                    Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi) }
+                } label: {
+                    Label("Resume Backup", systemImage: "play.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+                .controlSize(.regular)
+
+                Button("Discard & Start Fresh...", role: .destructive) {
+                    if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: device.id) {
+                        pendingIncompleteBackupIssue = BackupManager.BackupFailure(
+                            title: "Discard Incomplete Backup",
+                            message: "Move preserved partial data to Trash and run a fresh backup.",
+                            technicalDetails: path,
+                            recoveryAction: .deleteIncompleteAndRunFull,
+                            udid: device.id,
+                            recoveryPath: path
+                        )
+                        showIncompleteBackupTrashConfirm = true
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+            }
+            .padding(.top, 6)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyStateBackupActionLabel: String? {
