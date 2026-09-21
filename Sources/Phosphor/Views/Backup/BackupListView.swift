@@ -62,9 +62,9 @@ struct BackupListView: View {
             }
 
             if backupVM.backups.isEmpty {
-                if let device = deviceVM.selectedDevice, hasResumableBackup(for: device) {
+                if let device = deviceVM.selectedDevice, hasResumableBackup(for: device), !backupVM.isBackupActive(for: device.id) {
                     resumableBackupHeroCard(for: device)
-                } else {
+                } else if activeBackupActivities.isEmpty {
                     EmptyStateView(
                         icon: "externaldrive",
                         title: "No Backups Found",
@@ -161,8 +161,7 @@ struct BackupListView: View {
     }
 
     private var newBackupMenu: some View {
-        let isResumable = deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true
-        return Menu {
+        Menu {
             backupCreationButtons
 
             Divider()
@@ -187,12 +186,7 @@ struct BackupListView: View {
                 Label("Schedule Backups...", systemImage: "clock")
             }
         } label: {
-            if isResumable {
-                Label("Resume Backup", systemImage: "play.circle.fill")
-                    .foregroundStyle(Color.orange)
-            } else {
-                Label("New Backup", systemImage: "plus")
-            }
+            Label("New Backup", systemImage: "plus")
         }
     }
 

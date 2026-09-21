@@ -924,6 +924,11 @@ final class BackupManager: ObservableObject {
                     for line in trimmed.components(separatedBy: "\n") {
                         let l = line.trimmingCharacters(in: .whitespacesAndNewlines)
                         if l.isEmpty { continue }
+                        let lower = l.lowercased()
+                        if lower.contains("passcode") || lower.contains("pin") || lower.contains("trust") || lower.contains("unlock") || lower.contains("pair") {
+                            self.backupProgress = l
+                            onProgress(l)
+                        }
                         self.pymobiledeviceStderrTail.append(l)
                         if self.pymobiledeviceStderrTail.count > Self.stderrTailLineLimit {
                             self.pymobiledeviceStderrTail.removeFirst(

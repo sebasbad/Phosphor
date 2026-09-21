@@ -507,7 +507,12 @@ final class BackupViewModel: ObservableObject {
 
     private func updateBackupProgress(udid: String, text: String, manager: BackupManager) {
         let lower = text.lowercased()
-        let awaitingPasscode = lower.contains("passcode") || lower.contains("pin") || lower.contains("trust") || lower.contains("unlock")
+        let awaitingPasscode = lower.contains("passcode")
+            || lower.contains("pin")
+            || lower.contains("trust")
+            || lower.contains("unlock")
+            || lower.contains("not paired")
+            || lower.contains("pairing")
         updateActivity(udid: udid) { activity in
             activity.progressText = text
             activity.isAwaitingPasscode = awaitingPasscode
