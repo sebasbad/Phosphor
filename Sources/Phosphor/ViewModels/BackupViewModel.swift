@@ -40,17 +40,19 @@ final class BackupViewModel: ObservableObject {
                 let pct = Int(displayProgressFraction * 100)
                 var components: [String] = []
                 if pct >= 99 {
-                    components.append("Finalizing backup \(pct)%")
+                    components.append("Finalizing backup · Reorganizing & verifying files...")
                 } else if isResume && displayProgressFraction <= (resumeBaselineFraction + 0.05) {
                     components.append("Resuming \(pct)%")
                 } else {
                     components.append("Backing up \(pct)%")
                 }
-                if let speed, !speed.isEmpty {
-                    components.append(speed)
-                }
-                if let eta, !eta.isEmpty {
-                    components.append("ETA: \(eta)")
+                if pct < 99 {
+                    if let speed, !speed.isEmpty {
+                        components.append(speed)
+                    }
+                    if let eta, !eta.isEmpty {
+                        components.append("ETA: \(eta)")
+                    }
                 }
                 return components.joined(separator: " · ")
             case .completed: return "Completed"
@@ -67,9 +69,12 @@ final class BackupViewModel: ObservableObject {
                 // Compute progress over total: baseline + remaining * sessionFraction
                 let remainingFraction = 1.0 - resumeBaselineFraction
                 let totalFraction = resumeBaselineFraction + (remainingFraction * progressFraction)
-                return min(max(totalFraction, resumeBaselineFraction), 1.0)
+                let bounded = min(max(totalFraction, resumeBaselineFraction), 1.0)
+                // Cap in-progress running state at 0.99 so 100% is only shown when state becomes .completed
+                return state == .completed ? 1.0 : min(bounded, 0.99)
             }
-            return min(max(progressFraction, 0.05), 1.0)
+            let bounded = min(max(progressFraction, 0.05), 1.0)
+            return state == .completed ? 1.0 : min(bounded, 0.99)
         }
     }
 
