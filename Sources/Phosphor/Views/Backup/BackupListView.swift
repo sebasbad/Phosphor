@@ -108,6 +108,12 @@ struct BackupListView: View {
                 issue: issue,
                 primaryActionTitle: backupIssueActionTitle(for: issue),
                 primaryAction: { handleBackupIssueAction(issue) },
+                secondaryActionTitle: issue.recoveryAction == .resumeBackup ? "Delete & Start Fresh" : nil,
+                secondaryAction: issue.recoveryAction == .resumeBackup ? {
+                    pendingIncompleteBackupIssue = issue
+                    backupVM.backupIssue = nil
+                    showIncompleteBackupTrashConfirm = true
+                } : nil,
                 dismiss: { backupVM.backupIssue = nil }
             )
         }
@@ -324,6 +330,8 @@ struct BackupListView: View {
 
     private func backupIssueActionTitle(for issue: BackupManager.BackupFailure) -> String? {
         switch issue.recoveryAction {
+        case .resumeBackup:
+            return "Resume Backup"
         case .runFullBackup:
             return "Run Full Backup"
         case .deleteIncompleteAndRunFull:
@@ -339,6 +347,9 @@ struct BackupListView: View {
 
     private func handleBackupIssueAction(_ issue: BackupManager.BackupFailure) {
         switch issue.recoveryAction {
+        case .resumeBackup:
+            backupVM.backupIssue = nil
+            Task { await backupVM.resumeBackup(for: issue) }
         case .runFullBackup:
             backupVM.backupIssue = nil
             Task { await backupVM.runFullBackup(for: issue) }
@@ -504,6 +515,8 @@ struct BackupIssueSheet: View {
     let issue: BackupManager.BackupFailure
     let primaryActionTitle: String?
     let primaryAction: () -> Void
+    var secondaryActionTitle: String? = nil
+    var secondaryAction: (() -> Void)? = nil
     let dismiss: () -> Void
     @State private var showTechnicalDetails = false
 
@@ -538,6 +551,11 @@ struct BackupIssueSheet: View {
             }
 
             HStack {
+                if let secondaryActionTitle, let secondaryAction {
+                    Button(secondaryActionTitle, role: .destructive) {
+                        secondaryAction()
+                    }
+                }
                 Spacer()
                 Button("Cancel") { dismiss() }
                 if let primaryActionTitle {

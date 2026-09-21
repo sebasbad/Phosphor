@@ -94,6 +94,23 @@ final class BackupViewModel: ObservableObject {
         let incremental: Bool
         let preferNetwork: Bool
         let encrypted: Bool
+        let isResume: Bool
+
+        init(
+            id: UUID = UUID(),
+            udid: String,
+            incremental: Bool = false,
+            preferNetwork: Bool = false,
+            encrypted: Bool = false,
+            isResume: Bool = false
+        ) {
+            self.id = id
+            self.udid = udid
+            self.incremental = incremental
+            self.preferNetwork = preferNetwork
+            self.encrypted = encrypted
+            self.isResume = isResume
+        }
     }
 
     private struct BackupJobWaiter {
@@ -166,13 +183,14 @@ final class BackupViewModel: ObservableObject {
         }
     }
 
-    func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false, encrypted: Bool = false) async {
+    func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false, encrypted: Bool = false, isResume: Bool = false) async {
         let request = BackupRequest(
             id: UUID(),
             udid: udid,
             incremental: incremental,
             preferNetwork: preferNetwork,
-            encrypted: encrypted
+            encrypted: encrypted,
+            isResume: isResume
         )
         latestBackupRequests[udid] = request
 
@@ -213,16 +231,12 @@ final class BackupViewModel: ObservableObject {
                 backupActivities[udid] = BackupActivity(
                     udid: udid,
                     state: .running,
-                    progressText: "Preparing...",
+                    progressText: request.isResume ? "Preparing to resume..." : "Preparing...",
                     progressFraction: nil,
                     errorMessage: nil
                 )
                 refreshLegacyProgressState()
                 await withCheckedContinuation { continuation in
-                    // Every caller owns a detachable completion path, including
-                    // the request that starts the shared job. Keep the physical
-                    // backup in its own task so cancelling this request can return
-                    // immediately when another coalesced caller still authorizes it.
                     backupCompletionContinuations[udid] = continuation
                     let task = Task { [weak self] in
                         guard let self else { return }
@@ -277,6 +291,16 @@ final class BackupViewModel: ObservableObject {
         }
     }
 
+    func resumeBackup(udid: String, preferNetwork: Bool = false, encrypted: Bool = false) async {
+        await createBackup(
+            udid: udid,
+            incremental: false,
+            preferNetwork: preferNetwork,
+            encrypted: encrypted,
+            isResume: true
+        )
+    }
+
     private func cancelBackupRequest(udid: String, requestID: UUID) {
         switch requestTracker.cancel(requestID, udid: udid) {
         case .cancelJob:
@@ -319,7 +343,16 @@ final class BackupViewModel: ObservableObject {
         refreshLegacyProgressState()
 
         let success: Bool
-        if request.incremental {
+        if request.isResume {
+            success = await manager.resumeIncompleteBackup(
+                udid: udid,
+                encrypted: request.encrypted,
+                preferNetwork: request.preferNetwork
+            ) { [weak self, weak manager] text in
+                guard let manager else { return }
+                self?.updateBackupProgress(udid: udid, text: text, manager: manager)
+            }
+        } else if request.incremental {
             success = await manager.createIncrementalBackup(udid: udid, preferNetwork: request.preferNetwork) { [weak self, weak manager] text in
                 guard let manager else { return }
                 self?.updateBackupProgress(udid: udid, text: text, manager: manager)
@@ -454,6 +487,25 @@ final class BackupViewModel: ObservableObject {
         await createBackup(
             udid: udid,
             incremental: false,
+            preferNetwork: request?.preferNetwork ?? false,
+            encrypted: request?.encrypted ?? false
+        )
+    }
+
+    func resumeBackup(for issue: BackupManager.BackupFailure) async {
+        guard let udid = recoveryUdid(for: issue) else {
+            backupIssue = BackupManager.BackupFailure(
+                title: "Could Not Resume Backup",
+                message: "Phosphor could not identify which device needs to resume the backup. Re-select the device and start a backup manually.",
+                technicalDetails: issue.technicalDetails,
+                recoveryAction: nil
+            )
+            return
+        }
+        let request = recoveryRequest(for: issue)
+        backupIssue = nil
+        await resumeBackup(
+            udid: udid,
             preferNetwork: request?.preferNetwork ?? false,
             encrypted: request?.encrypted ?? false
         )
