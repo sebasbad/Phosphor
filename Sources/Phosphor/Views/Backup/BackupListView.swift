@@ -76,6 +76,8 @@ struct BackupListView: View {
                         actionLabel: emptyStateBackupActionLabel,
                         color: .brandAccent
                     )
+                } else {
+                    Spacer(minLength: 0)
                 }
             } else {
                 List {

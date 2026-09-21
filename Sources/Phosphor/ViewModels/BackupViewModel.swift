@@ -517,8 +517,14 @@ final class BackupViewModel: ObservableObject {
             || lower.contains("pairing")
         updateActivity(udid: udid) { activity in
             activity.progressText = text
-            activity.isAwaitingPasscode = awaitingPasscode
+            if awaitingPasscode {
+                activity.isAwaitingPasscode = true
+            }
             if let details = PyMobileDevice.parseProgressDetails(from: text) {
+                // If we receive active transfer speed or progress, user has completed unlocking
+                if details.speed != nil || details.fraction > 0.001 {
+                    activity.isAwaitingPasscode = false
+                }
                 // Ignore transient sub-phase 100% resets unless truly completing
                 if details.fraction >= 0.99 && activity.progressFraction ?? 0 < 0.85 {
                     // Transient 100% on metadata preparation phase - do not jump UI to 100%
@@ -529,6 +535,9 @@ final class BackupViewModel: ObservableObject {
                 if let eta = details.eta { activity.eta = eta }
                 if let speed = details.speed { activity.speed = speed }
             } else if let pct = PyMobileDevice.parseProgress(from: text) {
+                if pct > 0.001 {
+                    activity.isAwaitingPasscode = false
+                }
                 if pct >= 0.99 && activity.progressFraction ?? 0 < 0.85 {
                     // Transient subphase
                 } else {
@@ -536,6 +545,7 @@ final class BackupViewModel: ObservableObject {
                     activity.progressFraction = max(current, pct)
                 }
             } else if manager.backupPercent > 0 {
+                activity.isAwaitingPasscode = false
                 let current = activity.progressFraction ?? 0.0
                 activity.progressFraction = max(current, manager.backupPercent)
             }
