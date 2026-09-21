@@ -428,15 +428,22 @@ struct BackupListView: View {
                             backupVM.cancelBackup(udid: activity.udid)
                         }
                         .controlSize(.small)
+                        .help("Stops the backup and saves progress. You can resume later.")
                         .accessibilityLabel("Cancel backup for \(deviceIdentity(for: activity.udid))")
                     }
                     if case .running = activity.state {
-                        ProgressView(
-                            value: activity.displayProgressFraction,
-                            total: 1.0
-                        )
-                        .progressViewStyle(.linear)
-                        .tint(.brandAccent)
+                        VStack(alignment: .leading, spacing: 4) {
+                            ProgressView(
+                                value: activity.displayProgressFraction,
+                                total: 1.0
+                            )
+                            .progressViewStyle(.linear)
+                            .tint(.brandAccent)
+
+                            Text("Progress is saved automatically. You can stop or unplug and resume later.")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .padding(.horizontal, 20)

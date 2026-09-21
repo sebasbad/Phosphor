@@ -374,7 +374,7 @@ final class BackupViewModel: ObservableObject {
         } else if manager.lastOperationWasCancelled {
             updateActivity(udid: udid) {
                 $0.state = .cancelled
-                $0.progressText = "Cancelled"
+                $0.progressText = "Stopped (Progress Saved)"
             }
         } else {
             let error = manager.lastBackupFailure?.message ?? manager.lastError ?? "Backup failed"

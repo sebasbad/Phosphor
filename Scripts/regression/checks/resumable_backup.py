@@ -33,3 +33,16 @@ def test_backup_view_model_and_ui_support_resumable_backups(root: Path) -> None:
     assert_contains(list_src, "case .resumeBackup:", "BackupListView must handle resumeBackup recovery action")
     assert_contains(list_src, '"Resume Backup"', "BackupListView must show Resume Backup title")
     assert_contains(list_src, "secondaryActionTitle: issue.recoveryAction == .resumeBackup ? \"Delete & Start Fresh\" : nil", "BackupIssueSheet must offer Delete & Start Fresh as secondary action")
+
+
+def test_readiness_center_supports_resumable_backups(root: Path) -> None:
+    service_src = read(root, "Sources/Phosphor/Services/ReadinessService.swift")
+    view_src = read(root, "Sources/Phosphor/Views/Readiness/ReadinessCenterView.swift")
+
+    assert_contains(service_src, "case resumeBackup", "ReadinessOperation must support resumeBackup")
+    assert_contains(service_src, "Incomplete Backup (Resumable)", "ReadinessService must title resumable backups distinctively")
+    assert_contains(service_src, "BackupManager.incompleteBackupHasPayloadData", "ReadinessService must verify payload presence for resumability")
+
+    assert_contains(view_src, 'Label("Resume Backup", systemImage: "play.circle.fill")', "ReadinessCenterView must offer Resume Backup button")
+    assert_contains(view_src, "case .resumeBackup", "ReadinessCenterView must handle resumeBackup recovery operation")
+    assert_contains(view_src, "backupVM.resumeBackup", "ReadinessCenterView must call backupVM.resumeBackup")

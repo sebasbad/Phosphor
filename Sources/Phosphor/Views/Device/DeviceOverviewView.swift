@@ -419,6 +419,7 @@ struct DeviceOverviewView: View {
                         Spacer()
                         Button("Cancel") { backupVM.cancelBackup(udid: device.id) }
                             .controlSize(.small)
+                            .help("Stops the backup and saves progress. You can resume later.")
                     }
                     ProgressView(
                         value: activity.displayProgressFraction,
@@ -426,6 +427,10 @@ struct DeviceOverviewView: View {
                     )
                         .progressViewStyle(.linear)
                         .tint(.brandAccent)
+
+                    Text("Progress is saved automatically. You can resume later.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
 
