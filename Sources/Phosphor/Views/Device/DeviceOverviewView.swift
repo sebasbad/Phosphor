@@ -385,12 +385,12 @@ struct DeviceOverviewView: View {
                 ActionButton(
                     icon: backupVM.isBackupActive(for: device.id) ? "hourglass" : backupActionIcon(for: device),
                     label: backupVM.isBackupActive(for: device.id) ? "Backing Up..." : backupActionLabel(for: device),
-                    color: .brandAccent
+                    color: hasResumableBackup(for: device) ? .orange : .brandAccent
                 ) {
                     startBackup(for: device)
                 }
                 .disabled(backupVM.isBackupActive(for: device.id))
-                .help("Start a backup for this device")
+                .help(hasResumableBackup(for: device) ? "Resume interrupted backup from saved progress" : "Start a backup for this device")
                 if !device.isPaired {
                     ActionButton(icon: "link", label: "Pair", color: .green) {
                         Task { await deviceVM.pair() }
@@ -455,7 +455,17 @@ struct DeviceOverviewView: View {
         }
     }
 
+    private func hasResumableBackup(for device: DeviceInfo) -> Bool {
+        if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: device.id) {
+            return BackupManager.incompleteBackupHasPayloadData(path)
+        }
+        return false
+    }
+
     private func backupActionLabel(for device: DeviceInfo) -> String {
+        if hasResumableBackup(for: device) {
+            return "Resume"
+        }
         if device.connectionType == .wifi {
             return hasCompleteBackup(for: device) ? "Wi-Fi Backup" : "Full Wi-Fi"
         }
@@ -463,10 +473,17 @@ struct DeviceOverviewView: View {
     }
 
     private func backupActionIcon(for device: DeviceInfo) -> String {
-        device.connectionType == .wifi ? "wifi" : "externaldrive.badge.plus"
+        if hasResumableBackup(for: device) {
+            return "play.circle.fill"
+        }
+        return device.connectionType == .wifi ? "wifi" : "externaldrive.badge.plus"
     }
 
     private func startBackup(for device: DeviceInfo) {
+        if hasResumableBackup(for: device) {
+            Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi) }
+            return
+        }
         let preferNetwork = device.connectionType == .wifi
         let incremental = preferNetwork && hasCompleteBackup(for: device)
         if preferNetwork && !incremental {

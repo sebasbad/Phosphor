@@ -472,23 +472,41 @@ final class BackupManager: ObservableObject {
     /// True when the incomplete backup folder contains real payload data (hashed directories/files).
     static func incompleteBackupHasPayloadData(_ path: String) -> Bool {
         let fm = FileManager.default
-        guard let entries = try? fm.contentsOfDirectory(atPath: path) else { return false }
-        for entry in entries {
-            // iOS stores payload files in 2-hex-character subdirectories (00-ff) or SHA-1 hashes (40 chars)
-            if entry.count == 2 || entry.count == 40 {
-                let subPath = (path as NSString).appendingPathComponent(entry)
-                var isDir: ObjCBool = false
-                if fm.fileExists(atPath: subPath, isDirectory: &isDir) {
-                    if isDir.boolValue {
-                        if let subEntries = try? fm.contentsOfDirectory(atPath: subPath), !subEntries.isEmpty {
+        let checkPayloadDir: (String) -> Bool = { dirPath in
+            guard let entries = try? fm.contentsOfDirectory(atPath: dirPath) else { return false }
+            for entry in entries {
+                // iOS stores payload files in 2-hex-character subdirectories (00-ff) or SHA-1 hashes (40 chars)
+                if entry.count == 2 || entry.count == 40 {
+                    let subPath = (dirPath as NSString).appendingPathComponent(entry)
+                    var isDir: ObjCBool = false
+                    if fm.fileExists(atPath: subPath, isDirectory: &isDir) {
+                        if isDir.boolValue {
+                            if let subEntries = try? fm.contentsOfDirectory(atPath: subPath), !subEntries.isEmpty {
+                                return true
+                            }
+                        } else if isNonEmptyFile(subPath) {
                             return true
                         }
-                    } else if isNonEmptyFile(subPath) {
-                        return true
                     }
                 }
             }
+            return false
         }
+
+        // Check the backup root directory
+        if checkPayloadDir(path) {
+            return true
+        }
+
+        // MobileBackup2 / pymobiledevice3 stores in-flight files in a 'Snapshot/' subdirectory before promotion
+        let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
+        var isSnapshotDir: ObjCBool = false
+        if fm.fileExists(atPath: snapshotPath, isDirectory: &isSnapshotDir), isSnapshotDir.boolValue {
+            if checkPayloadDir(snapshotPath) {
+                return true
+            }
+        }
+
         return false
     }
 
