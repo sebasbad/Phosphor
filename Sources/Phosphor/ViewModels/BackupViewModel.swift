@@ -49,16 +49,26 @@ final class BackupViewModel: ObservableObject {
                 var components: [String] = []
                 if isFinalizing {
                     let pct = Int(displayProgressFraction * 100)
-                    components.append("Finalizing \(pct)%")
                     if let metrics = finalizationMetrics {
-                        components.append("\(metrics.filesMoved.formatted()) / ~\(metrics.totalFiles.formatted()) files")
-                        if let speed = metrics.formattedSpeed {
-                            components.append(speed)
-                        }
-                        if let eta = metrics.formattedETA {
-                            components.append("ETA: \(eta)")
+                        switch metrics.stage {
+                        case .moving:
+                            components.append("Finalizing \(pct)%")
+                            components.append("\(metrics.filesMoved.formatted()) / ~\(metrics.totalFiles.formatted()) files")
+                            if let speed = metrics.formattedSpeed {
+                                components.append(speed)
+                            }
+                            if let eta = metrics.formattedETA {
+                                components.append("ETA: \(eta)")
+                            }
+                        case .verifying(let scanned, let total):
+                            components.append("Verifying \(Int(metrics.phaseFraction * 100))%")
+                            components.append("Bucket \(scanned)/\(total)")
+                            if let eta = metrics.formattedETA {
+                                components.append("ETA: \(eta)")
+                            }
                         }
                     } else {
+                        components.append("Finalizing \(pct)%")
                         components.append("Reorganizing & verifying files...")
                     }
                 } else if isResume {
