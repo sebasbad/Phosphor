@@ -26,6 +26,8 @@ final class BackupViewModel: ObservableObject {
         var isAwaitingPasscode: Bool = false
         var errorMessage: String?
 
+        var finalizationMetrics: FinalizationProgressTracker.Metrics?
+
         var isActive: Bool {
             switch state {
             case .queued, .running: true
@@ -35,7 +37,7 @@ final class BackupViewModel: ObservableObject {
 
         var isFinalizing: Bool {
             if case .running = state {
-                return displayProgressFraction >= 0.99
+                return (progressFraction ?? 0.0) >= 0.99 || finalizationMetrics != nil
             }
             return false
         }
@@ -44,20 +46,33 @@ final class BackupViewModel: ObservableObject {
             switch state {
             case .queued(let position): return "Queued · #\(position)"
             case .running:
-                let pct = Int(displayProgressFraction * 100)
                 var components: [String] = []
                 if isFinalizing {
-                    components.append("Finalizing backup · Reorganizing & verifying files...")
+                    let pct = Int(displayProgressFraction * 100)
+                    components.append("Finalizing \(pct)%")
+                    if let metrics = finalizationMetrics {
+                        components.append("\(metrics.filesMoved.formatted()) / ~\(metrics.totalFiles.formatted()) files")
+                        if let speed = metrics.formattedSpeed {
+                            components.append(speed)
+                        }
+                        if let eta = metrics.formattedETA {
+                            components.append("ETA: \(eta)")
+                        }
+                    } else {
+                        components.append("Reorganizing & verifying files...")
+                    }
                 } else if isResume {
+                    let pct = Int(displayProgressFraction * 100)
                     if resumeBaselineFraction > 0 {
                         components.append("Resuming \(pct)%")
                     } else {
                         components.append("Resuming · Preparing...")
                     }
                 } else {
+                    let pct = Int(displayProgressFraction * 100)
                     components.append("Backing up \(pct)%")
                 }
-                if pct < 99 {
+                if !isFinalizing {
                     if let speed, !speed.isEmpty {
                         components.append(speed)
                     }
@@ -73,6 +88,14 @@ final class BackupViewModel: ObservableObject {
         }
 
         var displayProgressFraction: Double {
+            if isFinalizing {
+                if let metrics = finalizationMetrics {
+                    // Smoothly map phase fraction across the 0.90 -> 0.99 window
+                    let scaled = 0.90 + (metrics.phaseFraction * 0.09)
+                    return min(max(scaled, 0.90), 0.99)
+                }
+                return 0.99
+            }
             guard let progressFraction else {
                 return resumeBaselineFraction > 0 ? resumeBaselineFraction : 0.05
             }
@@ -128,6 +151,7 @@ final class BackupViewModel: ObservableObject {
     private var pendingBackupRequests: [String: BackupRequest] = [:]
     private var backupManagers: [String: BackupManager] = [:]
     private var backupJobTasks: [String: Task<Void, Never>] = [:]
+    private var finalizationTasks: [String: Task<Void, Never>] = [:]
     private var backupCompletionContinuations: [String: CheckedContinuation<Void, Never>] = [:]
     private var backupJobWaiters: [String: [BackupJobWaiter]] = [:]
 
@@ -468,6 +492,7 @@ final class BackupViewModel: ObservableObject {
     }
 
     private func finishBackupJob(udid: String) {
+        finalizationTasks.removeValue(forKey: udid)?.cancel()
         requestTracker.finish(udid: udid)
         pendingBackupRequests.removeValue(forKey: udid)
         backupManagers.removeValue(forKey: udid)
@@ -577,8 +602,35 @@ final class BackupViewModel: ObservableObject {
                 let current = activity.progressFraction ?? 0.0
                 activity.progressFraction = max(current, manager.backupPercent)
             }
+
+            if activity.isFinalizing {
+                startFinalizationWatchdogIfNeeded(udid: udid)
+            }
         }
         refreshLegacyProgressState()
+    }
+
+    private func startFinalizationWatchdogIfNeeded(udid: String) {
+        guard finalizationTasks[udid] == nil else { return }
+        let backupDir = BackupManager.activeBackupDir
+        let tracker = FinalizationProgressTracker(backupDirectory: backupDir, udid: udid)
+
+        finalizationTasks[udid] = Task.detached(priority: .utility) { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                if Task.isCancelled { break }
+                let metrics = tracker.sampleMetrics()
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    guard let metrics else { return }
+                    self.updateActivity(udid: udid) { activity in
+                        guard case .running = activity.state else { return }
+                        activity.finalizationMetrics = metrics
+                    }
+                    self.refreshLegacyProgressState()
+                }
+            }
+        }
     }
 
     func runFullBackup(for issue: BackupManager.BackupFailure) async {
