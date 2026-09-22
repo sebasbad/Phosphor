@@ -360,9 +360,20 @@ struct BackupListView: View {
             }
             .padding(.bottom, 2)
 
-            Text("Backup Paused for \(device.name)")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.primary)
+            VStack(spacing: 4) {
+                Text("Backup Paused for \(device.name)")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color.secondary.opacity(0.4))
+                        .frame(width: 7, height: 7)
+                    Text("Idle · Safe to disconnect or exit")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             if let stats = cachedIncompleteStats {
                 let activity = backupVM.activity(for: device.id)
@@ -432,17 +443,18 @@ struct BackupListView: View {
             } else if isLoadingIncompleteStats {
                 HStack(spacing: 6) {
                     ProgressView().scaleEffect(0.7)
-                    Text("Checking saved files...")
+                    Text("Reading saved files from disk…")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                .padding(.vertical, 4)
             }
 
-            Text("Phosphor will verify cached files and continue downloading remaining data without starting over.")
+            Text("Progress is saved. You can safely disconnect your device or close Phosphor. When ready, reconnect and resume anytime without starting over.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 380)
+                .frame(maxWidth: 420)
 
             HStack(spacing: 12) {
                 Button {
