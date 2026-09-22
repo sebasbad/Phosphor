@@ -134,6 +134,7 @@ final class BackupViewModel: ObservableObject {
         let preferNetwork: Bool
         let encrypted: Bool
         let isResume: Bool
+        let device: DeviceInfo?
 
         init(
             id: UUID = UUID(),
@@ -141,7 +142,8 @@ final class BackupViewModel: ObservableObject {
             incremental: Bool = false,
             preferNetwork: Bool = false,
             encrypted: Bool = false,
-            isResume: Bool = false
+            isResume: Bool = false,
+            device: DeviceInfo? = nil
         ) {
             self.id = id
             self.udid = udid
@@ -149,6 +151,7 @@ final class BackupViewModel: ObservableObject {
             self.preferNetwork = preferNetwork
             self.encrypted = encrypted
             self.isResume = isResume
+            self.device = device
         }
     }
 
@@ -222,14 +225,15 @@ final class BackupViewModel: ObservableObject {
         }
     }
 
-    func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false, encrypted: Bool = false, isResume: Bool = false) async {
+    func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false, encrypted: Bool = false, isResume: Bool = false, device: DeviceInfo? = nil) async {
         let request = BackupRequest(
             id: UUID(),
             udid: udid,
             incremental: incremental,
             preferNetwork: preferNetwork,
             encrypted: encrypted,
-            isResume: isResume
+            isResume: isResume,
+            device: device
         )
         latestBackupRequests[udid] = request
 
@@ -330,13 +334,14 @@ final class BackupViewModel: ObservableObject {
         }
     }
 
-    func resumeBackup(udid: String, preferNetwork: Bool = false, encrypted: Bool = false) async {
+    func resumeBackup(udid: String, preferNetwork: Bool = false, encrypted: Bool = false, device: DeviceInfo? = nil) async {
         await createBackup(
             udid: udid,
             incremental: false,
             preferNetwork: preferNetwork,
             encrypted: encrypted,
-            isResume: true
+            isResume: true,
+            device: device
         )
     }
 
@@ -382,10 +387,12 @@ final class BackupViewModel: ObservableObject {
                 BackupManager.incompleteBackupStats(for: udid)
             }.value
             if let stats {
-                // If we have saved files, estimate baseline between 5% and 50% based on payload size
-                // (typically an interrupted backup has already done a substantial portion)
-                if stats.totalBytes > 1_000_000_000 {
-                    baselineFraction = min(Double(stats.totalBytes) / 50_000_000_000.0, 0.40)
+                if let device = request.device, let calculatedFraction = stats.completionFraction(for: device) {
+                    // Accurately reflect preserved progress up to 99%
+                    baselineFraction = min(max(calculatedFraction, 0.05), 0.99)
+                } else if stats.totalBytes > 1_000_000_000 {
+                    // Fallback when device capacity is unknown: scale generously up to 95%
+                    baselineFraction = min(Double(stats.totalBytes) / 70_000_000_000.0, 0.95)
                     baselineFraction = max(baselineFraction, 0.10)
                 } else if stats.fileCount > 5000 {
                     baselineFraction = 0.10

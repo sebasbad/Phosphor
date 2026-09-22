@@ -169,7 +169,7 @@ struct ReadinessCenterView: View {
                 return
             }
             recoveryMessage = "Resuming backup for \(device.name)…"
-            await backupVM.resumeBackup(udid: udid, preferNetwork: device.connectionType == .wifi)
+            await backupVM.resumeBackup(udid: udid, preferNetwork: device.connectionType == .wifi, device: device)
             await deviceVM.refreshReadiness()
 
         case .deleteIncompleteBackupAndRunFull(let udid, let path):

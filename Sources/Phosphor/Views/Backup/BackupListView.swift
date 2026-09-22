@@ -287,7 +287,7 @@ struct BackupListView: View {
     private var backupCreationButtons: some View {
         if let device = deviceVM.selectedDevice, hasResumableBackup(for: device) {
             Button {
-                Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi) }
+                Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi, device: device) }
             } label: {
                 Label("Resume Saved Backup", systemImage: "play.circle.fill")
             }
@@ -446,7 +446,7 @@ struct BackupListView: View {
 
             HStack(spacing: 12) {
                 Button {
-                    Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi) }
+                    Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi, device: device) }
                 } label: {
                     Label("Resume Backup", systemImage: "play.circle.fill")
                 }
