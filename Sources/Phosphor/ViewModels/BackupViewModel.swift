@@ -42,6 +42,13 @@ final class BackupViewModel: ObservableObject {
             return false
         }
 
+        var isNonResumableFinalizationPhase: Bool {
+            if case .running = state, isFinalizing {
+                return true
+            }
+            return false
+        }
+
         var displayProgressText: String {
             switch state {
             case .queued(let position): return "Queued · #\(position)"

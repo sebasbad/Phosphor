@@ -20,6 +20,8 @@ struct BackupListView: View {
     @State private var pendingIncompleteBackupIssue: BackupManager.BackupFailure?
     @State private var cachedIncompleteStats: BackupManager.IncompleteBackupStats?
     @State private var isLoadingIncompleteStats = false
+    @State private var showNonResumableCancelConfirm = false
+    @State private var pendingCancelActivityUDID: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -154,6 +156,19 @@ struct BackupListView: View {
             }
         } message: {
             Text(fullWiFiBackupConfirmationMessage)
+        }
+        .alert("Stop Backup During Finalization?", isPresented: $showNonResumableCancelConfirm) {
+            Button("Keep Running", role: .cancel) {
+                pendingCancelActivityUDID = nil
+            }
+            Button("Stop Anyway (Non-Resumable)", role: .destructive) {
+                if let udid = pendingCancelActivityUDID {
+                    backupVM.cancelBackup(udid: udid)
+                }
+                pendingCancelActivityUDID = nil
+            }
+        } message: {
+            Text("The backup is currently consolidating and sealing its manifest on disk. This finalization phase is not partially resumable — stopping now will discard this completed backup and require starting fresh. Are you sure you want to stop?")
         }
         .sheet(isPresented: $showScheduleSheet) {
             BackupScheduleSheet()
@@ -633,12 +648,17 @@ struct BackupListView: View {
                         .accessibilityLabel("\(deviceIdentity(for: activity.udid)), \(activity.displayProgressText)")
                         Spacer()
                         Button {
-                            backupVM.cancelBackup(udid: activity.udid)
+                            if activity.isNonResumableFinalizationPhase {
+                                pendingCancelActivityUDID = activity.udid
+                                showNonResumableCancelConfirm = true
+                            } else {
+                                backupVM.cancelBackup(udid: activity.udid)
+                            }
                         } label: {
                             Label("Pause & Save", systemImage: "pause.circle")
                         }
                         .controlSize(.small)
-                        .help("Stops the backup and saves progress. You can resume later.")
+                        .help(activity.isNonResumableFinalizationPhase ? "Warning: Finalization is non-resumable. Stopping now will abort this completed backup." : "Stops the backup and saves progress. You can resume later.")
                         .accessibilityLabel("Cancel backup for \(deviceIdentity(for: activity.udid))")
                     }
                     if case .running = activity.state {
