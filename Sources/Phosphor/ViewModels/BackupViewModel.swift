@@ -46,10 +46,14 @@ final class BackupViewModel: ObservableObject {
             case .running:
                 let pct = Int(displayProgressFraction * 100)
                 var components: [String] = []
-                if pct >= 99 {
+                if isFinalizing {
                     components.append("Finalizing backup · Reorganizing & verifying files...")
-                } else if isResume && displayProgressFraction <= (resumeBaselineFraction + 0.05) {
-                    components.append("Resuming \(pct)%")
+                } else if isResume {
+                    if resumeBaselineFraction > 0 {
+                        components.append("Resuming \(pct)%")
+                    } else {
+                        components.append("Resuming · Preparing...")
+                    }
                 } else {
                     components.append("Backing up \(pct)%")
                 }
@@ -259,6 +263,7 @@ final class BackupViewModel: ObservableObject {
                     state: .queued(position: position),
                     progressText: "Queued",
                     progressFraction: nil,
+                    isResume: request.isResume,
                     errorMessage: nil
                 )
                 refreshLegacyProgressState()
@@ -276,6 +281,7 @@ final class BackupViewModel: ObservableObject {
                     state: .running,
                     progressText: request.isResume ? "Preparing to resume..." : "Preparing...",
                     progressFraction: nil,
+                    isResume: request.isResume,
                     errorMessage: nil
                 )
                 refreshLegacyProgressState()
