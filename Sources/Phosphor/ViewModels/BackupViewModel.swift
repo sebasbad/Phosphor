@@ -378,7 +378,10 @@ final class BackupViewModel: ObservableObject {
         let isResume = request.isResume
         var baselineFraction: Double = 0.0
         if isResume {
-            if let stats = BackupManager.incompleteBackupStats(for: udid) {
+            let stats = await Task.detached(priority: .utility) {
+                BackupManager.incompleteBackupStats(for: udid)
+            }.value
+            if let stats {
                 // If we have saved files, estimate baseline between 5% and 50% based on payload size
                 // (typically an interrupted backup has already done a substantial portion)
                 if stats.totalBytes > 1_000_000_000 {
