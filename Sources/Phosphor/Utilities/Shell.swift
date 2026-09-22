@@ -188,12 +188,26 @@ enum Shell {
         private var didFinish = false
         private var timedOut = false
         private var timeoutTask: Task<Void, Never>?
+        private var lastActivity = Date()
 
         func hasFinished() -> Bool {
             lock.lock()
             let value = didFinish
             lock.unlock()
             return value
+        }
+
+        func recordActivity() {
+            lock.lock()
+            lastActivity = Date()
+            lock.unlock()
+        }
+
+        func timeSinceLastActivity() -> TimeInterval {
+            lock.lock()
+            let elapsed = Date().timeIntervalSince(lastActivity)
+            lock.unlock()
+            return elapsed
         }
 
         func markTimedOut() -> Bool {
@@ -414,11 +428,9 @@ enum Shell {
     /// Grace given to a streaming command. `runStreaming` is what drives
     /// idevicebackup2 and pymobiledevice3 backup/restore, which flush and close
     /// the snapshot they are part-way through writing when they take SIGTERM.
-    /// The 50ms this replaced meant they never got there, so a timeout or a
-    /// user cancel amputated the backup. Now that cleanupComplete() reaps, a
-    /// child that exits promptly still returns in milliseconds - this is only
-    /// the ceiling for one that needs the time.
-    static let streamTerminationGrace: TimeInterval = 2.0
+    /// Give Python's multiprocessing.resource_tracker and snapshot writers
+    /// ample time (5.0s) to clean up semaphores and flush before escalating to SIGKILL.
+    static let streamTerminationGrace: TimeInterval = 5.0
 
     private static func terminateTimedOutTree(
         _ tree: ProcessTree,
@@ -650,12 +662,14 @@ enum Shell {
         stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
+                state.recordActivity()
                 DispatchQueue.main.async { onOutput(str) }
             }
         }
         stderrPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if !data.isEmpty, let str = String(data: data, encoding: .utf8) {
+                state.recordActivity()
                 DispatchQueue.main.async { onError(str) }
             }
         }
@@ -672,17 +686,24 @@ enum Shell {
 
         if let timeout {
             let timeoutTask = Task {
-                let nanoseconds = UInt64(max(timeout, 0) * 1_000_000_000)
-                try? await Task.sleep(nanoseconds: nanoseconds)
-                guard !Task.isCancelled, state.markTimedOut() else { return }
-                DispatchQueue.main.async { onError("Command timed out after \(Int(timeout))s") }
-                await terminateTimedOutTree(processTree, grace: streamTerminationGrace)
-                // The exit handler does not reap once timeout owns completion.
-                // Bounded for the same reason as the runAsync watchdog: an
-                // unkillable child must not strand the streaming completion.
-                reapWithinDeadline(process.processIdentifier, timeout: 1.0)
-                guard !Task.isCancelled else { return }
-                finish(exitCode: -1)
+                let checkInterval: TimeInterval = min(max(timeout / 4.0, 0.05), 15.0)
+                let checkNano = UInt64(checkInterval * 1_000_000_000)
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: checkNano)
+                    if Task.isCancelled || state.hasFinished() { return }
+                    if state.timeSinceLastActivity() >= timeout {
+                        guard state.markTimedOut() else { return }
+                        DispatchQueue.main.async { onError("Command timed out after \(Int(timeout))s of inactivity") }
+                        await terminateTimedOutTree(processTree, grace: streamTerminationGrace)
+                        // The exit handler does not reap once timeout owns completion.
+                        // Bounded for the same reason as the runAsync watchdog: an
+                        // unkillable child must not strand the streaming completion.
+                        reapWithinDeadline(process.processIdentifier, timeout: 1.0)
+                        guard !Task.isCancelled else { return }
+                        finish(exitCode: -1)
+                        return
+                    }
+                }
             }
             state.setTimeoutTask(timeoutTask)
         }
