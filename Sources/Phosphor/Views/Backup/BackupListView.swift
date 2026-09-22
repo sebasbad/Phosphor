@@ -364,7 +364,9 @@ struct BackupListView: View {
                 let activity = backupVM.activity(for: device.id)
                 let activityFraction = activity?.displayProgressFraction
                 let calculatedFraction = stats.completionFraction(for: device)
-                let fraction = activityFraction ?? calculatedFraction ?? (stats.totalBytes > 1_000_000_000 ? min(Double(stats.totalBytes) / 70_000_000_000.0, 0.95) : nil)
+                let rawFraction = activityFraction ?? calculatedFraction ?? (stats.totalBytes > 1_000_000_000 ? min(Double(stats.totalBytes) / 70_000_000_000.0, 0.95) : nil)
+                // A paused/interrupted backup is never 100% complete (which would be finalized). Cap at 0.99.
+                let fraction = rawFraction.map { min($0, 0.99) }
 
                 let remaining = stats.remainingBytes(for: device)
                 let eta = activity?.eta ?? stats.estimatedResumeTime(for: device)
@@ -377,7 +379,7 @@ struct BackupListView: View {
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(Color.orange)
                         } else {
-                            Text("?% saved")
+                            Text("Saved")
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(.secondary)
                         }
@@ -385,18 +387,18 @@ struct BackupListView: View {
                         Text("•")
                             .foregroundStyle(.secondary)
 
-                        if let remaining {
+                        if let remaining, remaining > 0 {
                             Text("\(remaining.formattedFileSize) remaining")
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(.secondary)
-                        } else if let fraction, fraction > 0, fraction < 1.0 {
+                        } else if let fraction, fraction > 0, fraction < 0.99 {
                             let totalEst = Double(stats.totalBytes) / fraction
                             let remBytes = UInt64(max(totalEst - Double(stats.totalBytes), 0))
                             Text("~\(remBytes.formattedFileSize) remaining")
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(.secondary)
                         } else {
-                            Text("? remaining")
+                            Text("Ready to finalize")
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(.secondary)
                         }
