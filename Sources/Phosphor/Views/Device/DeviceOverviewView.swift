@@ -15,6 +15,8 @@ struct DeviceOverviewView: View {
     @State private var showNonResumableCancelConfirm = false
     @State private var pendingCancelDeviceID: String?
     @State private var hasCurrentResumableBackup: Bool = false
+    @State private var showAppExclusionSheet = false
+    @State private var backupConfig = DeviceBackupConfiguration()
 
     var body: some View {
         Group {
@@ -25,16 +27,21 @@ struct DeviceOverviewView: View {
                         storageSection(device)
                         batterySection
                         infoSection(device)
+                        backupOptionsSection(device)
                         actionsSection(device)
                     }
                     .padding(24)
                 }
                 .background(Color.groupedBackground)
                 .task(id: device.id) {
+                    backupConfig = DeviceBackupConfiguration.load(for: device.id)
                     backupVM.loadBackups()
                     await updateResumableStatus(for: device.id)
                     battery = await diagnostics.getBatteryDiagnostics(udid: device.id)
                     storage = await diagnostics.getStorageBreakdown(udid: device.id)
+                }
+                .sheet(isPresented: $showAppExclusionSheet) {
+                    AppExclusionSheet(udid: device.id, configuration: $backupConfig)
                 }
             } else {
                 noDeviceView
@@ -59,7 +66,14 @@ struct DeviceOverviewView: View {
         .alert("Full Wi-Fi Backup?", isPresented: $showFullWiFiBackupConfirm) {
             Button("Run Full Wi-Fi Backup") {
                 if let device = pendingBackupDevice {
-                    Task { await backupVM.createBackup(udid: device.id, incremental: false, preferNetwork: true) }
+                    Task {
+                        await backupVM.createBackup(
+                            udid: device.id,
+                            incremental: false,
+                            preferNetwork: true,
+                            configuration: backupConfig
+                        )
+                    }
                 }
                 pendingBackupDevice = nil
             }
@@ -383,6 +397,18 @@ struct DeviceOverviewView: View {
         .cardStyle()
     }
 
+    // MARK: - Backup Profile & Exclusions
+
+    private func backupOptionsSection(_ device: DeviceInfo) -> some View {
+        BackupProfileSelectorView(
+            udid: device.id,
+            configuration: $backupConfig,
+            onCustomizeApps: {
+                showAppExclusionSheet = true
+            }
+        )
+    }
+
     // MARK: - Quick Actions
 
     private func actionsSection(_ device: DeviceInfo) -> some View {
@@ -582,7 +608,14 @@ struct DeviceOverviewView: View {
             showFullWiFiBackupConfirm = true
             return
         }
-        Task { await backupVM.createBackup(udid: device.id, incremental: incremental, preferNetwork: preferNetwork) }
+        Task {
+            await backupVM.createBackup(
+                udid: device.id,
+                incremental: incremental,
+                preferNetwork: preferNetwork,
+                configuration: backupConfig
+            )
+        }
     }
 
     private func copyableInfoRow(label: String, value: String, icon: String) -> some View {

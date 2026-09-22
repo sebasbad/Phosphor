@@ -84,6 +84,46 @@ final class AppManager: ObservableObject {
         isLoading = false
     }
 
+    /// List installed apps with exact DynamicDiskUsage and StaticDiskUsage (Issue #4).
+    func listInstalledAppsWithSizes(udid: String) async -> [AppBackupTarget] {
+        let pyApps = await PyMobileDevice.appsList(udid: udid, calculateSizes: true)
+        var targets: [AppBackupTarget] = []
+
+        for appDict in pyApps {
+            let bundleId = appDict["CFBundleIdentifier"] as? String ?? ""
+            guard !bundleId.isEmpty else { continue }
+
+            let name = appDict["CFBundleDisplayName"] as? String
+                ?? appDict["CFBundleName"] as? String
+                ?? bundleId.split(separator: ".").last.map(String.init) ?? bundleId
+            let version = appDict["CFBundleShortVersionString"] as? String
+                ?? appDict["CFBundleVersion"] as? String ?? ""
+            let isSystem = bundleId.hasPrefix("com.apple.")
+
+            let dynamicBytes = (appDict["DynamicDiskUsage"] as? NSNumber)?.int64Value ?? 0
+            let staticBytes = (appDict["StaticDiskUsage"] as? NSNumber)?.int64Value ?? 0
+
+            targets.append(AppBackupTarget(
+                id: bundleId,
+                displayName: name,
+                version: version,
+                dynamicDiskBytes: dynamicBytes,
+                staticDiskBytes: staticBytes,
+                isExcluded: false,
+                isMediaExcludedOnly: false,
+                isSystemApp: isSystem
+            ))
+        }
+
+        // Sort descending by dynamic data size first, then alphabetically
+        return targets.sorted {
+            if $0.dynamicDiskBytes != $1.dynamicDiskBytes {
+                return $0.dynamicDiskBytes > $1.dynamicDiskBytes
+            }
+            return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
     // MARK: - Backup Apps
 
     func loadBackupApps(backupPath: String) async {

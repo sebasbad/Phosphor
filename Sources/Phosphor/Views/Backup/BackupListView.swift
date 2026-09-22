@@ -23,6 +23,8 @@ struct BackupListView: View {
     @State private var showNonResumableCancelConfirm = false
     @State private var pendingCancelActivityUDID: String?
     @State private var hasCurrentResumableBackup: Bool = false
+    @State private var showAppExclusionSheet = false
+    @State private var backupConfig = DeviceBackupConfiguration()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -146,7 +148,14 @@ struct BackupListView: View {
             Button("Run Full Wi-Fi Backup") {
                 if let udid = pendingFullWiFiBackupUDID {
                     let preferNetwork = pendingFullWiFiBackupPrefersNetwork
-                    Task { await backupVM.createBackup(udid: udid, incremental: false, preferNetwork: preferNetwork) }
+                    Task {
+                        await backupVM.createBackup(
+                            udid: udid,
+                            incremental: false,
+                            preferNetwork: preferNetwork,
+                            configuration: backupConfig
+                        )
+                    }
                 }
                 pendingFullWiFiBackupUDID = nil
                 pendingFullWiFiBackupPrefersNetwork = false
@@ -175,8 +184,21 @@ struct BackupListView: View {
             BackupScheduleSheet()
                 .frame(width: 480, height: 500)
         }
-        .onAppear { backupVM.loadBackups() }
+        .sheet(isPresented: $showAppExclusionSheet) {
+            if let device = deviceVM.selectedDevice {
+                AppExclusionSheet(udid: device.id, configuration: $backupConfig)
+            }
+        }
+        .onAppear {
+            if let device = deviceVM.selectedDevice {
+                backupConfig = DeviceBackupConfiguration.load(for: device.id)
+            }
+            backupVM.loadBackups()
+        }
         .task(id: deviceVM.selectedDevice?.id) {
+            if let newUDID = deviceVM.selectedDevice?.id {
+                backupConfig = DeviceBackupConfiguration.load(for: newUDID)
+            }
             await updateResumableStatus()
         }
     }
@@ -186,6 +208,32 @@ struct BackupListView: View {
             backupCreationButtons
 
             Divider()
+
+            if let device = deviceVM.selectedDevice {
+                Menu("Backup Profile (\(backupConfig.profileType.title))") {
+                    ForEach(BackupProfileType.allCases) { profile in
+                        Button {
+                            backupConfig.profileType = profile
+                            backupConfig.save(for: device.id)
+                        } label: {
+                            HStack {
+                                Text(profile.title)
+                                if backupConfig.profileType == profile {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Button {
+                    showAppExclusionSheet = true
+                } label: {
+                    Label(backupConfig.excludedBundleIds.isEmpty ? "Customize App Data..." : "Customize App Data (\(backupConfig.excludedBundleIds.count) excluded)...", systemImage: "slider.horizontal.3")
+                }
+
+                Divider()
+            }
 
             Button {
                 importPhosphorArchive()
@@ -639,7 +687,14 @@ struct BackupListView: View {
             showFullWiFiBackupConfirm = true
             return
         }
-        Task { await backupVM.createBackup(udid: device.id, incremental: incremental, preferNetwork: device.connectionType == .wifi) }
+        Task {
+            await backupVM.createBackup(
+                udid: device.id,
+                incremental: incremental,
+                preferNetwork: device.connectionType == .wifi,
+                configuration: backupConfig
+            )
+        }
     }
 
     private func importPhosphorArchive() {
