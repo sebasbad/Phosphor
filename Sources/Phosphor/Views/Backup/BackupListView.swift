@@ -39,7 +39,7 @@ struct BackupListView: View {
 
                 newBackupMenu
                 .buttonStyle(.borderedProminent)
-                .tint(.brandAccent)
+                .tint(deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true ? .orange : .brandAccent)
 
                 Button {
                     backupVM.loadBackups()
@@ -188,7 +188,11 @@ struct BackupListView: View {
                 Label("Schedule Backups...", systemImage: "clock")
             }
         } label: {
-            Label("New Backup", systemImage: "plus")
+            if let device = deviceVM.selectedDevice, hasResumableBackup(for: device) {
+                Label("Resume Backup", systemImage: "play.circle.fill")
+            } else {
+                Label("New Backup", systemImage: "plus")
+            }
         }
     }
 

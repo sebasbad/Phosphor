@@ -440,14 +440,20 @@ struct DeviceOverviewView: View {
                         .controlSize(.small)
                         .help("Stops the backup and saves progress. You can resume later.")
                     }
-                    ProgressView(
-                        value: activity.displayProgressFraction,
-                        total: 1.0
-                    )
-                        .progressViewStyle(.linear)
-                        .tint(activity.isAwaitingPasscode ? .orange : .brandAccent)
+                    if activity.isFinalizing {
+                        ProgressView()
+                            .progressViewStyle(.linear)
+                            .tint(.brandAccent)
+                    } else {
+                        ProgressView(
+                            value: activity.displayProgressFraction,
+                            total: 1.0
+                        )
+                            .progressViewStyle(.linear)
+                            .tint(activity.isAwaitingPasscode ? .orange : .brandAccent)
+                    }
 
-                    Text("Progress is saved automatically. You can resume later.")
+                    Text(activity.isFinalizing ? "Consolidating files and sealing backup manifest on disk..." : "Progress is saved automatically. You can resume later.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -479,7 +485,7 @@ struct DeviceOverviewView: View {
 
     private func backupActionLabel(for device: DeviceInfo) -> String {
         if hasResumableBackup(for: device) {
-            return "Resume"
+            return "Resume Backup"
         }
         if device.connectionType == .wifi {
             return hasCompleteBackup(for: device) ? "Wi-Fi Backup" : "Full Wi-Fi"
@@ -565,7 +571,8 @@ struct ActionButton: View {
                 Text(label)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.primary)
-                    .lineLimit(1)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
                     .minimumScaleFactor(0.75)
             }
             .frame(width: 78, height: 62)
