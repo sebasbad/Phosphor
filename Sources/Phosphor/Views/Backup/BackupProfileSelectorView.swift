@@ -89,10 +89,10 @@ struct BackupProfileSelectorView: View {
                 // Excluded items
                 if !summary.excluded.isEmpty {
                     HStack(alignment: .top, spacing: 6) {
-                        Text("Skips:")
+                        Text("Excludes:")
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(.secondary)
-                            .frame(width: 52, alignment: .leading)
+                            .frame(width: 54, alignment: .leading)
 
                         FlowLayout(spacing: 4) {
                             ForEach(summary.excluded, id: \.self) { item in

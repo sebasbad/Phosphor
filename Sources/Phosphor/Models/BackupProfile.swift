@@ -178,11 +178,11 @@ public enum BackupProfileType: String, CaseIterable, Identifiable, Codable, Send
         case .full:
             return "All installed apps and local data included."
         case .bareMinimal:
-            return "All 3rd-party apps and data skipped (clean device restore)."
+            return "All 3rd-party apps and data excluded (clean device restore)."
         case .communicationAndIdentity:
             return "Only messaging apps (WhatsApp, Signal, Telegram, WeChat) included."
         case .essentialPhotos:
-            return "All 3rd-party apps and data skipped (saves 100+ GB)."
+            return "All 3rd-party apps and data excluded (saves 100+ GB)."
         case .custom:
             return "Granular custom app selection."
         }
