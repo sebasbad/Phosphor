@@ -949,19 +949,29 @@ struct BackupIssueSheet: View {
                 }
             }
 
-            HStack {
+            HStack(spacing: 12) {
                 if let secondaryActionTitle, let secondaryAction {
-                    Button(secondaryActionTitle, role: .destructive) {
+                    Button(secondaryActionTitle) {
                         secondaryAction()
                     }
+                    .buttonStyle(.bordered)
+                    .tint(.secondary)
                 }
+
                 Spacer()
+
                 Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+
                 if let primaryActionTitle {
-                    Button(primaryActionTitle, role: issue.recoveryAction == .deleteIncompleteAndRunFull ? .destructive : nil) {
+                    let isDestructive = issue.recoveryAction == .deleteIncompleteAndRunFull
+                    Button(primaryActionTitle) {
                         primaryAction()
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(isDestructive ? Color.red : Color.brandAccent)
+                    .foregroundStyle(.white)
+                    .keyboardShortcut(.defaultAction)
                 }
             }
         }
