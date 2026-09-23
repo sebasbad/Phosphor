@@ -16,6 +16,7 @@ struct DeviceOverviewView: View {
     @State private var pendingCancelDeviceID: String?
     @State private var hasCurrentResumableBackup: Bool = false
     @State private var showAppExclusionSheet = false
+    @State private var showPreflightSheet = false
     @State private var backupConfig = DeviceBackupConfiguration()
 
     var body: some View {
@@ -27,7 +28,6 @@ struct DeviceOverviewView: View {
                         storageSection(device)
                         batterySection
                         infoSection(device)
-                        backupOptionsSection(device)
                         actionsSection(device)
                     }
                     .padding(24)
@@ -39,6 +39,20 @@ struct DeviceOverviewView: View {
                     await updateResumableStatus(for: device.id)
                     battery = await diagnostics.getBatteryDiagnostics(udid: device.id)
                     storage = await diagnostics.getStorageBreakdown(udid: device.id)
+                }
+                .sheet(isPresented: $showPreflightSheet) {
+                    BackupPreflightSheet(
+                        device: device,
+                        incremental: device.connectionType == .wifi && hasCompleteBackup(for: device),
+                        preferNetwork: device.connectionType == .wifi,
+                        configuration: $backupConfig,
+                        onStartBackup: {
+                            executeBackup(for: device)
+                        },
+                        onCustomizeApps: {
+                            showAppExclusionSheet = true
+                        }
+                    )
                 }
                 .sheet(isPresented: $showAppExclusionSheet) {
                     AppExclusionSheet(udid: device.id, configuration: $backupConfig)
@@ -397,18 +411,6 @@ struct DeviceOverviewView: View {
         .cardStyle()
     }
 
-    // MARK: - Backup Profile & Exclusions
-
-    private func backupOptionsSection(_ device: DeviceInfo) -> some View {
-        BackupProfileSelectorView(
-            udid: device.id,
-            configuration: $backupConfig,
-            onCustomizeApps: {
-                showAppExclusionSheet = true
-            }
-        )
-    }
-
     // MARK: - Quick Actions
 
     private func actionsSection(_ device: DeviceInfo) -> some View {
@@ -601,6 +603,16 @@ struct DeviceOverviewView: View {
             Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi, device: device) }
             return
         }
+
+        // If user chose to always use this profile, skip pre-flight sheet
+        if backupConfig.alwaysUseProfile {
+            executeBackup(for: device)
+        } else {
+            showPreflightSheet = true
+        }
+    }
+
+    private func executeBackup(for device: DeviceInfo) {
         let preferNetwork = device.connectionType == .wifi
         let incremental = preferNetwork && hasCompleteBackup(for: device)
         if preferNetwork && !incremental {
