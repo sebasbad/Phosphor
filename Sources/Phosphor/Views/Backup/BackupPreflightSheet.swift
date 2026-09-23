@@ -134,12 +134,7 @@ struct BackupPreflightSheet: View {
 
                     BackupProfileSelectorView(
                         udid: device.id,
-                        configuration: $configuration,
-                        onCustomizeApps: {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                currentStep = .appExclusions
-                            }
-                        }
+                        configuration: $configuration
                     )
 
                     // App Exclusion Shortcut
