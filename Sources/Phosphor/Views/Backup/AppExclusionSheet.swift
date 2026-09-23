@@ -75,9 +75,9 @@ struct AppExclusionView: View {
                 Spacer()
 
                 VStack(spacing: 2) {
-                    Text("Selective App Data Exclusion")
+                    Text("Profile Details & App Inclusions")
                         .font(.headline.weight(.semibold))
-                    Text("Exclude bulky app caches or media from backup")
+                    Text("Review included domains and select which apps to back up")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -95,38 +95,52 @@ struct AppExclusionView: View {
             .padding(.top, 16)
             .padding(.bottom, 12)
 
-            // Reassurance & Savings Banner
-            HStack(spacing: 12) {
-                Image(systemName: "checkmark.shield.fill")
-                    .font(.title3)
-                    .foregroundStyle(.green)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("System Data & Accounts are Always Protected")
-                        .font(.caption.bold())
-                        .foregroundStyle(.primary)
-                    Text("Contacts, Keychain passwords, Messages, and System Settings are never excluded.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if totalExcludedBytes > 0 {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text("\(excludedBundleIds.count) apps excluded")
+            // Reassurance & Architecture Banner
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 12) {
+                    Image(systemName: "checkmark.shield.fill")
+                        .font(.title3)
+                        .foregroundStyle(.green)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("System Data & Accounts are Always Protected")
+                            .font(.caption.bold())
+                            .foregroundStyle(.primary)
+                        Text("Contacts, Keychain passwords, Messages, and System Settings are never excluded.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                        Text("Saving \(formattedSavings)")
-                            .font(.caption.bold())
-                            .foregroundStyle(Color.brandAccent)
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(Color.brandAccent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                    Spacer()
+                    if totalExcludedBytes > 0 {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("\(excludedBundleIds.count) apps excluded")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text("Saving \(formattedSavings)")
+                                .font(.caption.bold())
+                                .foregroundStyle(Color.brandAccent)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.brandAccent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+
+                Divider()
+
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                    Text("iOS Backup Note: App binaries download from App Store. Excluded apps skip all local data and will not transfer to a restored device.")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
                 }
             }
             .padding(12)
             .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
             .padding(.horizontal, 20)
             .padding(.bottom, 12)
+
 
             // Controls: Search, Sort & Presets
             HStack(spacing: 12) {
@@ -157,21 +171,22 @@ struct AppExclusionView: View {
                 .pickerStyle(.menu)
                 .frame(width: 170)
 
-                Menu("Presets") {
-                    Button("Exclude Apps > 5 GB") {
+                Menu("Bulk Actions") {
+                    Button("Skip Apps > 5 GB") {
                         excludeAppsAbove(bytes: 5 * 1024 * 1024 * 1024)
                     }
-                    Button("Exclude Apps > 1 GB") {
+                    Button("Skip Apps > 1 GB") {
                         excludeAppsAbove(bytes: 1 * 1024 * 1024 * 1024)
                     }
                     Divider()
-                    Button("Select All (Exclude All Apps)") {
+                    Button("Skip All Apps (Exclude All)") {
                         excludedBundleIds = Set(apps.map(\.id))
                     }
-                    Button("Clear All Exclusions") {
+                    Button("Include All Apps (Reset)") {
                         excludedBundleIds.removeAll()
                     }
                 }
+
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 12)
@@ -200,56 +215,18 @@ struct AppExclusionView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List {
-                    ForEach(filteredApps) { app in
-                        HStack(spacing: 12) {
-                            Toggle("", isOn: Binding(
-                                get: { excludedBundleIds.contains(app.id) },
-                                set: { isExcluded in
-                                    if isExcluded {
-                                        excludedBundleIds.insert(app.id)
-                                    } else {
-                                        excludedBundleIds.remove(app.id)
-                                    }
-                                }
-                            ))
-                            .labelsHidden()
-
-                            Image(systemName: app.isSystemApp ? "apple.logo" : "app.fill")
-                                .font(.title3)
-                                .foregroundStyle(app.isSystemApp ? .secondary : Color.brandAccent)
-                                .frame(width: 28, height: 28)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: 6) {
-                                    Text(app.displayName)
-                                        .font(.system(size: 13, weight: .semibold))
-                                    if app.isSystemApp {
-                                        Text("System")
-                                            .font(.system(size: 9, weight: .bold))
-                                            .padding(.horizontal, 4)
-                                            .padding(.vertical, 1)
-                                            .background(Color.secondary.opacity(0.15), in: Capsule())
-                                    }
-                                }
-                                Text(app.id)
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            Spacer()
-
-                            VStack(alignment: .trailing, spacing: 2) {
-                                Text(app.formattedDynamicSize)
-                                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                                    .foregroundStyle(app.dynamicDiskBytes > 1_000_000_000 ? .orange : .primary)
-                                Text("Data & Cache")
-                                    .font(.system(size: 10))
-                                    .foregroundStyle(.secondary)
+                List(filteredApps) { app in
+                    AppRowView(
+                        app: app,
+                        isExcluded: excludedBundleIds.contains(app.id),
+                        onToggle: { isExcluded in
+                            if isExcluded {
+                                excludedBundleIds.insert(app.id)
+                            } else {
+                                excludedBundleIds.remove(app.id)
                             }
                         }
-                        .padding(.vertical, 2)
-                    }
+                    )
                 }
                 .listStyle(.inset)
             }
@@ -303,3 +280,66 @@ struct AppExclusionSheet: View {
         .frame(minWidth: 550, idealWidth: 620, minHeight: 480, idealHeight: 560)
     }
 }
+
+/// Extracted row view for an application target in the backup inclusion/exclusion list.
+struct AppRowView: View {
+    let app: AppBackupTarget
+    let isExcluded: Bool
+    let onToggle: (Bool) -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Toggle("", isOn: Binding(
+                get: { isExcluded },
+                set: { onToggle($0) }
+            ))
+            .labelsHidden()
+
+            Image(systemName: app.isSystemApp ? "apple.logo" : "app.fill")
+                .font(.title3)
+                .foregroundStyle(app.isSystemApp ? .secondary : Color.brandAccent)
+                .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(app.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                    if app.isSystemApp {
+                        Text("System")
+                            .font(.system(size: 9, weight: .bold))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(Color.secondary.opacity(0.15), in: Capsule())
+                    }
+                }
+                Text(app.id)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            // Status Badge
+            Text(isExcluded ? "Skipped" : "Included")
+                .font(.system(size: 10, weight: .bold))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    isExcluded ? Color.secondary.opacity(0.12) : Color.green.opacity(0.12),
+                    in: RoundedRectangle(cornerRadius: 4)
+                )
+                .foregroundStyle(isExcluded ? Color.secondary : Color.green)
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(app.formattedDynamicSize)
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(app.dynamicDiskBytes > 1_000_000_000 ? .orange : .primary)
+                Text("Data & Cache")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
