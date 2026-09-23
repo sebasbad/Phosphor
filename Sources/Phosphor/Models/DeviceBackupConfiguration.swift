@@ -6,17 +6,20 @@ public struct DeviceBackupConfiguration: Codable, Equatable, Sendable {
     public var excludedBundleIds: Set<String>
     public var excludeMediaAbove50MB: Bool
     public var customIncludedDomains: Set<String>
+    public var alwaysUseProfile: Bool
 
     public init(
         profileType: BackupProfileType = .full,
         excludedBundleIds: Set<String> = [],
         excludeMediaAbove50MB: Bool = false,
-        customIncludedDomains: Set<String> = []
+        customIncludedDomains: Set<String> = [],
+        alwaysUseProfile: Bool = false
     ) {
         self.profileType = profileType
         self.excludedBundleIds = excludedBundleIds
         self.excludeMediaAbove50MB = excludeMediaAbove50MB
         self.customIncludedDomains = customIncludedDomains
+        self.alwaysUseProfile = alwaysUseProfile
     }
 
     private static func storageKey(for udid: String) -> String {
