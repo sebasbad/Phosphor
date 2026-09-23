@@ -25,6 +25,7 @@ struct AppExclusionView: View {
     @State private var isLoading = true
     @State private var searchText = ""
     @State private var sortOption: SortOption = .sizeDescending
+    @State private var showAppleApps: Bool = false
     @State private var excludedBundleIds: Set<String> = []
 
     // File Rules State
@@ -41,7 +42,8 @@ struct AppExclusionView: View {
     @State private var manifestAvailable = false
 
     enum SortOption: String, CaseIterable, Identifiable {
-        case sizeDescending = "Largest Data First"
+        case sizeDescending = "Largest Total Size"
+        case dynamicDescending = "Largest Data/Cache"
         case nameAscending = "Name (A-Z)"
 
         var id: String { rawValue }
@@ -49,6 +51,9 @@ struct AppExclusionView: View {
 
     var filteredApps: [AppBackupTarget] {
         var result = apps
+        if !showAppleApps {
+            result = result.filter { !$0.isSystemApp }
+        }
         if !searchText.isEmpty {
             result = result.filter {
                 $0.displayName.localizedCaseInsensitiveContains(searchText) ||
@@ -57,6 +62,13 @@ struct AppExclusionView: View {
         }
         switch sortOption {
         case .sizeDescending:
+            return result.sorted {
+                let s0 = $0.dynamicDiskBytes + $0.staticDiskBytes
+                let s1 = $1.dynamicDiskBytes + $1.staticDiskBytes
+                if s0 != s1 { return s0 > s1 }
+                return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+            }
+        case .dynamicDescending:
             return result.sorted {
                 if $0.dynamicDiskBytes != $1.dynamicDiskBytes {
                     return $0.dynamicDiskBytes > $1.dynamicDiskBytes
@@ -228,6 +240,13 @@ struct AppExclusionView: View {
                 .padding(.vertical, 5)
                 .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
 
+                Toggle(isOn: $showAppleApps) {
+                    Text("Apple Apps")
+                        .font(.system(size: 11))
+                }
+                .toggleStyle(.checkbox)
+                .help("Show pre-installed Apple stock applications")
+
                 Picker("Sort", selection: $sortOption) {
                     ForEach(SortOption.allCases) { opt in
                         Text(opt.rawValue).tag(opt)
@@ -237,15 +256,28 @@ struct AppExclusionView: View {
                 .frame(width: 170)
 
                 Menu("Bulk Actions") {
-                    Button("Skip Apps > 5 GB") {
+                    Button("Exclude Apps > 5 GB") {
                         excludeAppsAbove(bytes: 5 * 1024 * 1024 * 1024)
                     }
-                    Button("Skip Apps > 1 GB") {
+                    Button("Exclude Apps > 2 GB") {
+                        excludeAppsAbove(bytes: 2 * 1024 * 1024 * 1024)
+                    }
+                    Button("Exclude Apps > 1 GB") {
                         excludeAppsAbove(bytes: 1 * 1024 * 1024 * 1024)
                     }
+                    Button("Exclude Apps > 500 MB") {
+                        excludeAppsAbove(bytes: 500 * 1024 * 1024)
+                    }
+                    Button("Exclude Apps > 100 MB") {
+                        excludeAppsAbove(bytes: 100 * 1024 * 1024)
+                    }
                     Divider()
-                    Button("Skip All Apps (Exclude All)") {
-                        excludedBundleIds = Set(apps.map(\.id))
+                    Button("Exclude All User Apps") {
+                        let userApps = apps.filter { !$0.isSystemApp }
+                        excludedBundleIds.formUnion(userApps.map(\.id))
+                    }
+                    Button("Exclude All Listed Apps") {
+                        excludedBundleIds = Set(filteredApps.map(\.id))
                     }
                     Button("Include All Apps (Reset)") {
                         excludedBundleIds.removeAll()
@@ -487,15 +519,15 @@ struct AppExclusionView: View {
 
                         Spacer()
 
-                        Text(isExcluded ? "Skipped" : "Included")
+                        Text(isExcluded ? "Excluded" : "Included")
                             .font(.system(size: 9, weight: .bold))
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
                             .background(
-                                isExcluded ? Color.secondary.opacity(0.12) : Color.green.opacity(0.12),
+                                isExcluded ? Color.red.opacity(0.12) : Color.green.opacity(0.12),
                                 in: RoundedRectangle(cornerRadius: 4)
                             )
-                            .foregroundStyle(isExcluded ? Color.secondary : Color.green)
+                            .foregroundStyle(isExcluded ? Color.red : Color.green)
 
                         Text(ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file))
                             .font(.system(size: 11, weight: .bold, design: .rounded))
@@ -571,8 +603,12 @@ struct AppExclusionView: View {
     }
 
     private func excludeAppsAbove(bytes: Int64) {
-        for app in apps where !app.isSystemApp && app.dynamicDiskBytes >= bytes {
-            excludedBundleIds.insert(app.id)
+        for app in apps {
+            if !showAppleApps && app.isSystemApp { continue }
+            let totalBytes = app.dynamicDiskBytes + app.staticDiskBytes
+            if totalBytes >= bytes || app.dynamicDiskBytes >= bytes {
+                excludedBundleIds.insert(app.id)
+            }
         }
     }
 
@@ -629,7 +665,7 @@ struct AppRowView: View {
                     Text(app.displayName)
                         .font(.system(size: 13, weight: .semibold))
                     if app.isSystemApp {
-                        Text("System")
+                        Text("Apple")
                             .font(.system(size: 9, weight: .bold))
                             .padding(.horizontal, 4)
                             .padding(.vertical, 1)
@@ -643,24 +679,30 @@ struct AppRowView: View {
 
             Spacer()
 
-            // Status Badge
-            Text(isExcluded ? "Skipped" : "Included")
+            // Status Badge: Excluded vs Included
+            Text(isExcluded ? "Excluded" : "Included")
                 .font(.system(size: 10, weight: .bold))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(
-                    isExcluded ? Color.secondary.opacity(0.12) : Color.green.opacity(0.12),
+                    isExcluded ? Color.red.opacity(0.12) : Color.green.opacity(0.12),
                     in: RoundedRectangle(cornerRadius: 4)
                 )
-                .foregroundStyle(isExcluded ? Color.secondary : Color.green)
+                .foregroundStyle(isExcluded ? Color.red : Color.green)
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text(app.formattedDynamicSize)
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundStyle(app.dynamicDiskBytes > 1_000_000_000 ? .orange : .primary)
-                Text("Data & Cache")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                if app.staticDiskBytes > 0 {
+                    Text("Total: \(app.formattedTotalSize)")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Data & Cache")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.vertical, 2)

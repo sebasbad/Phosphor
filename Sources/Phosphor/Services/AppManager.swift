@@ -98,10 +98,25 @@ final class AppManager: ObservableObject {
                 ?? bundleId.split(separator: ".").last.map(String.init) ?? bundleId
             let version = appDict["CFBundleShortVersionString"] as? String
                 ?? appDict["CFBundleVersion"] as? String ?? ""
-            let isSystem = bundleId.hasPrefix("com.apple.")
 
             let dynamicBytes = (appDict["DynamicDiskUsage"] as? NSNumber)?.int64Value ?? 0
             let staticBytes = (appDict["StaticDiskUsage"] as? NSNumber)?.int64Value ?? 0
+
+            // Filter out hidden internal Apple system daemons and view services that have 0 data
+            let isApple = bundleId.hasPrefix("com.apple.")
+            let isInternalDaemon = isApple && (
+                bundleId.hasSuffix("UIService") ||
+                bundleId.hasSuffix("ViewService") ||
+                bundleId.hasSuffix("Dialog") ||
+                bundleId.hasSuffix("Receiver") ||
+                bundleId.contains(".Sharing.") ||
+                bundleId.contains(".remote.") ||
+                bundleId.contains(".MediaRemote")
+            )
+            // Skip 0-byte internal system background daemons
+            if isInternalDaemon && dynamicBytes == 0 {
+                continue
+            }
 
             targets.append(AppBackupTarget(
                 id: bundleId,
@@ -111,14 +126,16 @@ final class AppManager: ObservableObject {
                 staticDiskBytes: staticBytes,
                 isExcluded: false,
                 isMediaExcludedOnly: false,
-                isSystemApp: isSystem
+                isSystemApp: isApple
             ))
         }
 
-        // Sort descending by dynamic data size first, then alphabetically
+        // Sort descending by total data/footprint first, then alphabetically
         return targets.sorted {
-            if $0.dynamicDiskBytes != $1.dynamicDiskBytes {
-                return $0.dynamicDiskBytes > $1.dynamicDiskBytes
+            let total0 = $0.dynamicDiskBytes + $0.staticDiskBytes
+            let total1 = $1.dynamicDiskBytes + $1.staticDiskBytes
+            if total0 != total1 {
+                return total0 > total1
             }
             return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         }
