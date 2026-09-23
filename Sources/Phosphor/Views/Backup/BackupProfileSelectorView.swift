@@ -4,7 +4,6 @@ import SwiftUI
 struct BackupProfileSelectorView: View {
     let udid: String
     @Binding var configuration: DeviceBackupConfiguration
-    var onCustomizeApps: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -57,33 +56,6 @@ struct BackupProfileSelectorView: View {
                     .padding(.vertical, 2)
                     .background(Color.brandAccent.opacity(0.12), in: Capsule())
                     .foregroundStyle(Color.brandAccent)
-            }
-
-            if !configuration.excludedBundleIds.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: "minus.circle.fill")
-                        .foregroundStyle(.orange)
-                        .font(.system(size: 11))
-                    Text("\(configuration.excludedBundleIds.count) apps excluded")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Edit Exclusions") {
-                        onCustomizeApps()
-                    }
-                    .buttonStyle(.link)
-                    .font(.system(size: 11))
-                }
-                .padding(.top, 2)
-            } else if configuration.profileType == .full || configuration.profileType == .custom {
-                Button {
-                    onCustomizeApps()
-                } label: {
-                    Label("Customize App Data...", systemImage: "slider.horizontal.3")
-                        .font(.system(size: 11))
-                }
-                .buttonStyle(.link)
-                .padding(.top, 2)
             }
         }
         .padding(12)
