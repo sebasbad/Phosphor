@@ -165,8 +165,8 @@ struct AppExclusionView: View {
                         excludeAppsAbove(bytes: 1 * 1024 * 1024 * 1024)
                     }
                     Divider()
-                    Button("Select All (Exclude All User Apps)") {
-                        excludedBundleIds = Set(apps.filter { !$0.isSystemApp }.map(\.id))
+                    Button("Select All (Exclude All Apps)") {
+                        excludedBundleIds = Set(apps.map(\.id))
                     }
                     Button("Clear All Exclusions") {
                         excludedBundleIds.removeAll()
