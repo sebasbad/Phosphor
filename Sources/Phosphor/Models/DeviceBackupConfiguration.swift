@@ -5,6 +5,9 @@ public struct DeviceBackupConfiguration: Codable, Equatable, Sendable {
     public var profileType: BackupProfileType
     public var excludedBundleIds: Set<String>
     public var excludeMediaAbove50MB: Bool
+    public var excludeAppCaches: Bool
+    public var excludedFilePatterns: [String]
+    public var excludedRelativePaths: Set<String>
     public var customIncludedDomains: Set<String>
     public var alwaysUseProfile: Bool
 
@@ -12,12 +15,18 @@ public struct DeviceBackupConfiguration: Codable, Equatable, Sendable {
         profileType: BackupProfileType = .full,
         excludedBundleIds: Set<String> = [],
         excludeMediaAbove50MB: Bool = false,
+        excludeAppCaches: Bool = false,
+        excludedFilePatterns: [String] = [],
+        excludedRelativePaths: Set<String> = [],
         customIncludedDomains: Set<String> = [],
         alwaysUseProfile: Bool = false
     ) {
         self.profileType = profileType
         self.excludedBundleIds = excludedBundleIds
         self.excludeMediaAbove50MB = excludeMediaAbove50MB
+        self.excludeAppCaches = excludeAppCaches
+        self.excludedFilePatterns = excludedFilePatterns
+        self.excludedRelativePaths = excludedRelativePaths
         self.customIncludedDomains = customIncludedDomains
         self.alwaysUseProfile = alwaysUseProfile
     }

@@ -36,6 +36,7 @@ struct BackupPreflightSheet: View {
             case .appExclusions:
                 AppExclusionView(
                     udid: device.id,
+                    backupDirectory: backupDirectory,
                     configuration: $configuration,
                     onDismiss: {
                         withAnimation(.easeInOut(duration: 0.2)) {
@@ -46,7 +47,7 @@ struct BackupPreflightSheet: View {
             }
         }
         .frame(
-            width: currentStep == .appExclusions ? 620 : 520,
+            width: currentStep == .appExclusions ? 680 : 520,
             height: 640
         )
         .animation(.easeInOut(duration: 0.2), value: currentStep)
