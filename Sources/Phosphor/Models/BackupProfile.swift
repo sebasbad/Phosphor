@@ -80,7 +80,114 @@ public enum BackupProfileType: String, CaseIterable, Identifiable, Codable, Send
         }
     }
 
-    /// Apple com.apple.mobilebackup2 domain regex patterns to PRESERVE for this profile.
+    /// Granular domain categories available for backup filtering and customization.
+    public enum DomainCategory: String, CaseIterable, Identifiable, Codable, Sendable {
+        case identityAndSettings = "identity_settings"
+        case messagesAndHealth = "messages_health"
+        case cameraRoll = "camera_roll"
+        case media = "media"
+        case apps = "apps"
+
+        public var id: String { rawValue }
+
+        public var title: String {
+            switch self {
+            case .identityAndSettings:
+                return "Settings, Passwords & Accounts"
+            case .messagesAndHealth:
+                return "SMS, Messages & Health"
+            case .cameraRoll:
+                return "Photos & Videos (Camera Roll)"
+            case .media:
+                return "Music, Podcasts & Books"
+            case .apps:
+                return "Applications & Data"
+            }
+        }
+
+        public var iconName: String {
+            switch self {
+            case .identityAndSettings:
+                return "key.fill"
+            case .messagesAndHealth:
+                return "message.fill"
+            case .cameraRoll:
+                return "photo.fill"
+            case .media:
+                return "music.note"
+            case .apps:
+                return "app.badge.checkmark"
+            }
+        }
+
+        public var isProtected: Bool {
+            self == .identityAndSettings
+        }
+    }
+
+    /// Set of domain categories included by default for this profile template.
+    public var defaultDomainCategories: Set<DomainCategory> {
+        switch self {
+        case .full:
+            return Set(DomainCategory.allCases)
+        case .bareMinimal:
+            return [.identityAndSettings, .messagesAndHealth]
+        case .communicationAndIdentity:
+            return [.identityAndSettings, .messagesAndHealth]
+        case .essentialPhotos:
+            return [.identityAndSettings, .messagesAndHealth, .cameraRoll]
+        case .custom:
+            return [.identityAndSettings, .messagesAndHealth]
+        }
+    }
+
+    /// Content summary items (included and excluded) for high-transparency display in UI cards.
+    public var contentSummary: (included: [String], excluded: [String]) {
+        switch self {
+        case .full:
+            return (
+                included: ["Keychain & Settings", "Messages & Health", "Photos & Videos", "All Apps & Data"],
+                excluded: []
+            )
+        case .bareMinimal:
+            return (
+                included: ["Keychain & Passwords", "System Settings", "SMS & Contacts", "Health Data", "Apple Stock Apps"],
+                excluded: ["Photos & Videos", "3rd-Party Apps", "Music & Podcasts"]
+            )
+        case .communicationAndIdentity:
+            return (
+                included: ["Keychain & Settings", "SMS & Contacts", "WhatsApp / Signal / Telegram", "Health Data"],
+                excluded: ["Photos & Videos", "Non-Chat Apps", "Music & Podcasts"]
+            )
+        case .essentialPhotos:
+            return (
+                included: ["Keychain & Settings", "SMS & Contacts", "Photos & Videos (Camera Roll)", "Health Data"],
+                excluded: ["3rd-Party Apps", "Music & Podcasts"]
+            )
+        case .custom:
+            return (
+                included: ["Custom Domain Selection"],
+                excluded: ["User-Selected Exclusions"]
+            )
+        }
+    }
+
+    /// User-facing description of how apps are treated in this profile.
+    public var appInclusionSummary: String {
+        switch self {
+        case .full:
+            return "All installed apps and local data included."
+        case .bareMinimal:
+            return "All 3rd-party apps and data skipped (clean device restore)."
+        case .communicationAndIdentity:
+            return "Only messaging apps (WhatsApp, Signal, Telegram, WeChat) included."
+        case .essentialPhotos:
+            return "All 3rd-party apps and data skipped (saves 100+ GB)."
+        case .custom:
+            return "Granular custom app selection."
+        }
+    }
+
     /// Returns nil if no domain filtering is needed (full archive).
     public func preservationRegex(
         customDomains: Set<String> = [],

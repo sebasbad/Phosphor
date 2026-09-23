@@ -57,6 +57,62 @@ struct BackupProfileSelectorView: View {
                     .background(Color.brandAccent.opacity(0.12), in: Capsule())
                     .foregroundStyle(Color.brandAccent)
             }
+
+            // Transparent breakdown pills
+            let summary = configuration.profileType.contentSummary
+            VStack(alignment: .leading, spacing: 6) {
+                // Included items
+                if !summary.included.isEmpty {
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("Includes:")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 52, alignment: .leading)
+
+                        FlowLayout(spacing: 4) {
+                            ForEach(summary.included, id: \.self) { item in
+                                HStack(spacing: 3) {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 8, weight: .bold))
+                                    Text(item)
+                                        .font(.system(size: 10))
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                                .foregroundStyle(.green)
+                            }
+                        }
+                    }
+                }
+
+                // Excluded items
+                if !summary.excluded.isEmpty {
+                    HStack(alignment: .top, spacing: 6) {
+                        Text("Skips:")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 52, alignment: .leading)
+
+                        FlowLayout(spacing: 4) {
+                            ForEach(summary.excluded, id: \.self) { item in
+                                HStack(spacing: 3) {
+                                    Image(systemName: "minus")
+                                        .font(.system(size: 8, weight: .bold))
+                                    Text(item)
+                                        .font(.system(size: 10))
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 4))
+                                .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.top, 2)
+
         }
         .padding(12)
         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 10))
