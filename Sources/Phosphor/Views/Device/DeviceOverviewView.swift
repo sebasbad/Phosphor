@@ -66,7 +66,35 @@ struct DeviceOverviewView: View {
             Text(backupVM.alertMessage)
         }
         .alert("Backup Issue", isPresented: backupIssuePresented) {
-            Button("OK", role: .cancel) { backupVM.backupIssue = nil }
+            if let issue = backupVM.backupIssue {
+                if issue.recoveryAction == .resumeBackup {
+                    Button("Resume Backup") {
+                        Task { await backupVM.resumeBackup(for: issue) }
+                    }
+                    Button("Move to Trash & Start Fresh", role: .destructive) {
+                        Task { await backupVM.deleteIncompleteBackupAndRunFull(for: issue) }
+                    }
+                    Button("Move to Trash Only") {
+                        Task { await backupVM.deleteIncompleteBackupOnly(for: issue) }
+                    }
+                } else if issue.recoveryAction == .deleteIncompleteAndRunFull {
+                    Button("Move to Trash & Run Backup", role: .destructive) {
+                        Task { await backupVM.deleteIncompleteBackupAndRunFull(for: issue) }
+                    }
+                    Button("Move to Trash Only") {
+                        Task { await backupVM.deleteIncompleteBackupOnly(for: issue) }
+                    }
+                } else if issue.recoveryAction == .runFullBackup {
+                    Button("Run Full Backup") {
+                        Task { await backupVM.runFullBackup(for: issue) }
+                    }
+                } else if issue.recoveryAction == .retry {
+                    Button("Retry") {
+                        Task { await backupVM.retryBackup(for: issue) }
+                    }
+                }
+            }
+            Button("Dismiss", role: .cancel) { backupVM.backupIssue = nil }
         } message: {
             Text(backupVM.backupIssue.map { "\($0.title)\n\n\($0.message)" } ?? "Backup failed")
         }
