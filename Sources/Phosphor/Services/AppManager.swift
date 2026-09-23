@@ -102,20 +102,30 @@ final class AppManager: ObservableObject {
             let dynamicBytes = (appDict["DynamicDiskUsage"] as? NSNumber)?.int64Value ?? 0
             let staticBytes = (appDict["StaticDiskUsage"] as? NSNumber)?.int64Value ?? 0
 
-            // Filter out hidden internal Apple system daemons and view services that have 0 data
             let isApple = bundleId.hasPrefix("com.apple.")
-            let isInternalDaemon = isApple && (
-                bundleId.hasSuffix("UIService") ||
-                bundleId.hasSuffix("ViewService") ||
-                bundleId.hasSuffix("Dialog") ||
-                bundleId.hasSuffix("Receiver") ||
-                bundleId.contains(".Sharing.") ||
-                bundleId.contains(".remote.") ||
-                bundleId.contains(".MediaRemote")
-            )
-            // Skip 0-byte internal system background daemons
-            if isInternalDaemon && dynamicBytes == 0 {
-                continue
+            if isApple {
+                // Known user-facing Apple productivity and media applications that store user documents
+                let userFacingAppleApps: Set<String> = [
+                    "com.apple.iBooks",
+                    "com.apple.Pages",
+                    "com.apple.Keynote",
+                    "com.apple.Numbers",
+                    "com.apple.garageband",
+                    "com.apple.iMovie",
+                    "com.apple.podcasts",
+                    "com.apple.shortcuts",
+                    "com.apple.freeform",
+                    "com.apple.clips",
+                    "com.apple.Music",
+                    "com.apple.mobileslideshow"
+                ]
+
+                // If it's an internal Apple system daemon/service or has 0 bytes, completely exclude from UI
+                let isAllowedUserApp = userFacingAppleApps.contains(bundleId)
+                if !isAllowedUserApp {
+                    // Do not expose internal system services/daemons to backup exclusion list
+                    continue
+                }
             }
 
             targets.append(AppBackupTarget(
