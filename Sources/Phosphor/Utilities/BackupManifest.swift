@@ -374,6 +374,17 @@ final class BackupManifest {
         return rows.compactMap(parseFileEntry)
     }
 
+    /// Retrieve top largest files across app domains, resolving sizes efficiently.
+    func largestAppFiles(limit: Int = 100) throws -> [FileEntry] {
+        let rows = try db.query(
+            "SELECT fileID, domain, relativePath, flags FROM Files WHERE flags = 1 AND domain LIKE 'AppDomain-%' LIMIT \(max(1, min(limit * 3, 2000)))"
+        )
+        let entries = rows.compactMap(parseFileEntry)
+        let resolved = resolvingSizes(for: entries)
+        return Array(resolved.sorted { $0.size > $1.size }.prefix(limit))
+    }
+
+
     /// Get total file count.
     func totalFileCount() throws -> Int {
         try db.rowCount(for: "Files")

@@ -191,48 +191,80 @@ public enum BackupProfileType: String, CaseIterable, Identifiable, Codable, Send
     /// Returns nil if no domain filtering is needed (full archive).
     public func preservationRegex(
         customDomains: Set<String> = [],
-        excludedBundleIds: Set<String> = []
+        excludedBundleIds: Set<String> = [],
+        excludeMediaFiles: Bool = false,
+        excludeAppCaches: Bool = false,
+        excludedFilePatterns: [String] = [],
+        excludedRelativePaths: Set<String> = []
     ) -> [String]? {
+        // Collect negative exclusion sub-patterns for files
+        var negativeFileParts: [String] = []
+        if excludeMediaFiles {
+            negativeFileParts.append(#"\.(mp4|mkv|mov|avi|webm|m4v|flac|wav|iso|bin)$"#)
+        }
+        if excludeAppCaches {
+            negativeFileParts.append(#"/(Library/Caches|tmp)/"#)
+        }
+        for pattern in excludedFilePatterns where !pattern.isEmpty {
+            let escaped = NSRegularExpression.escapedPattern(for: pattern)
+                .replacingOccurrences(of: #"\*"#, with: ".*")
+            negativeFileParts.append(escaped)
+        }
+        for relPath in excludedRelativePaths where !relPath.isEmpty {
+            negativeFileParts.append(NSRegularExpression.escapedPattern(for: relPath) + "$")
+        }
+
+        let fileNegativeLookahead: String
+        if !negativeFileParts.isEmpty {
+            fileNegativeLookahead = "(?!.*(" + negativeFileParts.joined(separator: "|") + "))"
+        } else {
+            fileNegativeLookahead = ""
+        }
+
         switch self {
         case .full:
-            // If full, but user explicitly excluded specific app bundle IDs
-            guard !excludedBundleIds.isEmpty else { return nil }
-            // Negative lookahead regex to match everything EXCEPT excluded app domains
-            let excludedPattern = excludedBundleIds
-                .map { NSRegularExpression.escapedPattern(for: $0) }
-                .joined(separator: "|")
-            return ["^(?!AppDomain(-\(excludedPattern)|Group(-\(excludedPattern))).*).*$"]
+            guard !excludedBundleIds.isEmpty || !fileNegativeLookahead.isEmpty else { return nil }
+            if !excludedBundleIds.isEmpty {
+                let excludedPattern = excludedBundleIds
+                    .map { NSRegularExpression.escapedPattern(for: $0) }
+                    .joined(separator: "|")
+                return ["^\(fileNegativeLookahead)(?!AppDomain(-\(excludedPattern)|Group(-\(excludedPattern))).*).*$"]
+            } else {
+                return ["^\(fileNegativeLookahead).*$"]
+            }
 
         case .bareMinimal:
             // Core identity, communication, health, settings. Excludes CameraRoll, Media, and third-party apps.
             return [
-                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain-com\\.apple\\..*)$"
+                "^\(fileNegativeLookahead)(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain-com\\.apple\\..*)$"
             ]
 
         case .communicationAndIdentity:
             // Bare Minimal + popular communication apps (WhatsApp, Signal, Telegram, WeChat)
             return [
-                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain-com\\.apple\\..*|AppDomain(-Group)?-(net\\.whatsapp\\.WhatsApp|org\\.whispersystems\\.signal|ph\\.telegra\\.Telegraph|com\\.tencent\\.xin).*)$"
+                "^\(fileNegativeLookahead)(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain-com\\.apple\\..*|AppDomain(-Group)?-(net\\.whatsapp\\.WhatsApp|org\\.whispersystems\\.signal|ph\\.telegra\\.Telegraph|com\\.tencent\\.xin).*)$"
             ]
 
         case .essentialPhotos:
             // Bare Minimal + Camera Roll photos/videos
             return [
-                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|CameraRollDomain|AppDomain-com\\.apple\\..*)$"
+                "^\(fileNegativeLookahead)(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|CameraRollDomain|AppDomain-com\\.apple\\..*)$"
             ]
 
         case .custom:
-            guard !customDomains.isEmpty || !excludedBundleIds.isEmpty else { return nil }
+            guard !customDomains.isEmpty || !excludedBundleIds.isEmpty || !fileNegativeLookahead.isEmpty else { return nil }
             var patterns: [String] = []
             if !customDomains.isEmpty {
                 let joined = customDomains.joined(separator: "|")
-                patterns.append("^(\(joined)).*$")
+                patterns.append("^\(fileNegativeLookahead)(\(joined)).*$")
             }
             if !excludedBundleIds.isEmpty {
                 let excludedPattern = excludedBundleIds
                     .map { NSRegularExpression.escapedPattern(for: $0) }
                     .joined(separator: "|")
-                patterns.append("^(?!AppDomain(-\(excludedPattern)|Group(-\(excludedPattern))).*).*$")
+                patterns.append("^\(fileNegativeLookahead)(?!AppDomain(-\(excludedPattern)|Group(-\(excludedPattern))).*).*$")
+            } else if customDomains.isEmpty && !fileNegativeLookahead.isEmpty {
+                patterns.append("^\(fileNegativeLookahead).*$")
             }
             return patterns.isEmpty ? nil : patterns
         }

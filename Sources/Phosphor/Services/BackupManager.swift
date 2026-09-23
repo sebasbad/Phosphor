@@ -1038,7 +1038,11 @@ final class BackupManager: ObservableObject {
         let config = configuration ?? DeviceBackupConfiguration.load(for: udid)
         let onlyRegex = config.profileType.preservationRegex(
             customDomains: config.customIncludedDomains,
-            excludedBundleIds: config.excludedBundleIds
+            excludedBundleIds: config.excludedBundleIds,
+            excludeMediaFiles: config.excludeMediaAbove50MB,
+            excludeAppCaches: config.excludeAppCaches,
+            excludedFilePatterns: config.excludedFilePatterns,
+            excludedRelativePaths: config.excludedRelativePaths
         )
         let patchManifest = (onlyRegex != nil && !onlyRegex!.isEmpty)
 
