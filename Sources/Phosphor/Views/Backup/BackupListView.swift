@@ -195,9 +195,6 @@ struct BackupListView: View {
                     configuration: $backupConfig,
                     onStartBackup: {
                         startBackup(for: device, incremental: pendingPreflightIncremental)
-                    },
-                    onCustomizeApps: {
-                        showAppExclusionSheet = true
                     }
                 )
             }
