@@ -65,38 +65,32 @@ struct DeviceOverviewView: View {
         } message: {
             Text(backupVM.alertMessage)
         }
-        .alert("Backup Issue", isPresented: backupIssuePresented) {
-            if let issue = backupVM.backupIssue {
-                if issue.recoveryAction == .resumeBackup {
-                    Button("Resume Backup") {
+        .sheet(item: $backupVM.backupIssue) { issue in
+            BackupIssueSheet(
+                issue: issue,
+                primaryActionTitle: issue.recoveryAction == .resumeBackup ? "Resume Backup" : (issue.recoveryAction == .deleteIncompleteAndRunFull ? "Move to Trash & Run Backup" : (issue.recoveryAction == .runFullBackup ? "Run Full Backup" : "Retry")),
+                primaryAction: {
+                    if issue.recoveryAction == .resumeBackup {
+                        backupVM.backupIssue = nil
                         Task { await backupVM.resumeBackup(for: issue) }
-                    }
-                    Button("Move to Trash & Start Fresh", role: .destructive) {
+                    } else if issue.recoveryAction == .deleteIncompleteAndRunFull {
+                        backupVM.backupIssue = nil
                         Task { await backupVM.deleteIncompleteBackupAndRunFull(for: issue) }
-                    }
-                    Button("Move to Trash Only") {
-                        Task { await backupVM.deleteIncompleteBackupOnly(for: issue) }
-                    }
-                } else if issue.recoveryAction == .deleteIncompleteAndRunFull {
-                    Button("Move to Trash & Run Backup", role: .destructive) {
-                        Task { await backupVM.deleteIncompleteBackupAndRunFull(for: issue) }
-                    }
-                    Button("Move to Trash Only") {
-                        Task { await backupVM.deleteIncompleteBackupOnly(for: issue) }
-                    }
-                } else if issue.recoveryAction == .runFullBackup {
-                    Button("Run Full Backup") {
+                    } else if issue.recoveryAction == .runFullBackup {
+                        backupVM.backupIssue = nil
                         Task { await backupVM.runFullBackup(for: issue) }
-                    }
-                } else if issue.recoveryAction == .retry {
-                    Button("Retry") {
+                    } else {
+                        backupVM.backupIssue = nil
                         Task { await backupVM.retryBackup(for: issue) }
                     }
-                }
-            }
-            Button("Dismiss", role: .cancel) { backupVM.backupIssue = nil }
-        } message: {
-            Text(backupVM.backupIssue.map { "\($0.title)\n\n\($0.message)" } ?? "Backup failed")
+                },
+                secondaryActionTitle: issue.recoveryAction == .resumeBackup || issue.recoveryAction == .deleteIncompleteAndRunFull ? "Move to Trash Only" : nil,
+                secondaryAction: {
+                    backupVM.backupIssue = nil
+                    Task { await backupVM.deleteIncompleteBackupOnly(for: issue) }
+                },
+                dismiss: { backupVM.backupIssue = nil }
+            )
         }
         .alert("Full Wi-Fi Backup?", isPresented: $showFullWiFiBackupConfirm) {
             Button("Run Full Wi-Fi Backup") {
@@ -129,13 +123,6 @@ struct DeviceOverviewView: View {
         } message: {
             Text("The backup is currently consolidating and sealing its manifest on disk. This finalization phase is not partially resumable — stopping now will discard this completed backup and require starting fresh. Are you sure you want to stop?")
         }
-    }
-
-    private var backupIssuePresented: Binding<Bool> {
-        Binding(
-            get: { backupVM.backupIssue != nil },
-            set: { if !$0 { backupVM.backupIssue = nil } }
-        )
     }
 
     private var noDeviceView: some View {
