@@ -343,6 +343,8 @@ struct BackupListView: View {
     }
 
     private func hasResumableBackup(for device: DeviceInfo) -> Bool {
+        // If a backup is actively transferring or finalizing right now, it is not an interrupted backup
+        guard !backupVM.isBackupActive(for: device.id) else { return false }
         if device.id == deviceVM.selectedDevice?.id {
             return hasCurrentResumableBackup
         }
