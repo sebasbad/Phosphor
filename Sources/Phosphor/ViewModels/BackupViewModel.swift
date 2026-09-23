@@ -764,6 +764,28 @@ final class BackupViewModel: ObservableObject {
         }
     }
 
+    func deleteIncompleteBackupOnly(for issue: BackupManager.BackupFailure) async {
+        guard let udid = recoveryUdid(for: issue), let path = issue.recoveryPath else {
+            backupIssue = nil
+            return
+        }
+        do {
+            let recoveryRoot = (path as NSString).deletingLastPathComponent
+            try BackupManager.deleteIncompleteBackup(for: udid, expectedPath: path, in: recoveryRoot)
+            backupIssue = nil
+            loadBackups()
+        } catch {
+            backupIssue = BackupManager.BackupFailure(
+                title: "Could Not Move Incomplete Backup",
+                message: "Phosphor could not move the incomplete backup folder to Trash: \(error.localizedDescription)",
+                technicalDetails: error.localizedDescription,
+                recoveryAction: .openBackupSettings,
+                udid: udid,
+                recoveryPath: path
+            )
+        }
+    }
+
     func retryBackup(for issue: BackupManager.BackupFailure) async {
         guard let request = recoveryRequest(for: issue) else { return }
         backupIssue = nil
