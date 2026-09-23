@@ -137,37 +137,39 @@ struct BackupPreflightSheet: View {
                         configuration: $configuration
                     )
 
-                    // App Exclusion Shortcut
-                    HStack(spacing: 8) {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 13))
-                            .foregroundStyle(Color.brandAccent)
+                    // App Exclusions Card (Relevant for Full or Custom profiles, or when exclusions exist)
+                    if configuration.profileType == .full || configuration.profileType == .custom || !configuration.excludedBundleIds.isEmpty {
+                        HStack(spacing: 8) {
+                            Image(systemName: "slider.horizontal.3")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Color.brandAccent)
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Third-Party App Exclusions")
-                                .font(.system(size: 12, weight: .semibold))
-                            if configuration.excludedBundleIds.isEmpty {
-                                Text("No apps excluded. All installed apps are included.")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Text("\(configuration.excludedBundleIds.count) apps excluded from backup.")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.orange)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("App Exclusions")
+                                    .font(.system(size: 12, weight: .semibold))
+                                if configuration.excludedBundleIds.isEmpty {
+                                    Text("All apps included in backup.")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text("\(configuration.excludedBundleIds.count) apps excluded from backup.")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.orange)
+                                }
                             }
-                        }
 
-                        Spacer()
+                            Spacer()
 
-                        Button("Customize...") {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                currentStep = .appExclusions
+                            Button("Customize...") {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    currentStep = .appExclusions
+                                }
                             }
+                            .controlSize(.small)
                         }
-                        .controlSize(.small)
+                        .padding(12)
+                        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
                     }
-                    .padding(12)
-                    .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
 
                     // Don't show again preference
                     Toggle(isOn: $configuration.alwaysUseProfile) {
