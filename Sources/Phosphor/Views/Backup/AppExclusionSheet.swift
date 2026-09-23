@@ -1,11 +1,13 @@
 import SwiftUI
 
-/// Modal sheet for selective app data exclusion before running iOS backups (Issue #4).
-struct AppExclusionSheet: View {
+/// View for selective app data exclusion before running iOS backups (Issue #4).
+/// Can be presented as a standalone sheet or embedded inside BackupPreflightSheet.
+struct AppExclusionView: View {
     let udid: String
     @Binding var configuration: DeviceBackupConfiguration
-    @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject private var appManager: AppManager
+    var onDismiss: () -> Void
+
+    @StateObject private var appManager = AppManager()
 
     @State private var apps: [AppBackupTarget] = []
     @State private var isLoading = true
@@ -57,22 +59,40 @@ struct AppExclusionSheet: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                VStack(alignment: .leading, spacing: 4) {
+                Button {
+                    saveAndDismiss()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Options")
+                            .font(.system(size: 13))
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.brandAccent)
+
+                Spacer()
+
+                VStack(spacing: 2) {
                     Text("Selective App Data Exclusion")
-                        .font(.title2.bold())
-                    Text("Exclude bulky third-party app caches or offline media to speed up backups.")
-                        .font(.subheadline)
+                        .font(.headline.weight(.semibold))
+                    Text("Exclude bulky app caches or media from backup")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
                 Spacer()
+
                 Button("Done") {
                     saveAndDismiss()
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
+                .controlSize(.small)
             }
             .padding(.horizontal, 20)
-            .padding(.top, 20)
+            .padding(.top, 16)
             .padding(.bottom, 12)
 
             // Reassurance & Savings Banner
@@ -234,7 +254,6 @@ struct AppExclusionSheet: View {
                 .listStyle(.inset)
             }
         }
-        .frame(minWidth: 550, idealWidth: 620, minHeight: 480, idealHeight: 560)
         .task {
             loadApps()
         }
@@ -263,6 +282,24 @@ struct AppExclusionSheet: View {
         configuration.excludedBundleIds = excludedBundleIds
         configuration.excludeMediaAbove50MB = excludeMediaAbove50MB
         configuration.save(for: udid)
-        dismiss()
+        onDismiss()
+    }
+}
+
+/// Modal sheet wrapper for selective app data exclusion before running iOS backups (Issue #4).
+struct AppExclusionSheet: View {
+    let udid: String
+    @Binding var configuration: DeviceBackupConfiguration
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        AppExclusionView(
+            udid: udid,
+            configuration: $configuration,
+            onDismiss: {
+                dismiss()
+            }
+        )
+        .frame(minWidth: 550, idealWidth: 620, minHeight: 480, idealHeight: 560)
     }
 }
