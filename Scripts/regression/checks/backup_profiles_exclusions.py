@@ -57,5 +57,5 @@ def test_app_exclusion_sheet_and_profile_selector_views_exist(root: Path) -> Non
     assert_contains(selector_src, "Backup Profile", "BackupProfileSelectorView must show profile title")
 
     assert_contains(preflight_src, "BackupProfileSelectorView", "BackupPreflightSheet must embed BackupProfileSelectorView")
+    assert_contains(preflight_src, "AppExclusion", "BackupPreflightSheet must embed AppExclusion view")
     assert_contains(overview_src, "BackupPreflightSheet", "DeviceOverviewView must present BackupPreflightSheet on backup action")
-    assert_contains(overview_src, "AppExclusionSheet", "DeviceOverviewView must present AppExclusionSheet")

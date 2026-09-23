@@ -15,7 +15,6 @@ struct DeviceOverviewView: View {
     @State private var showNonResumableCancelConfirm = false
     @State private var pendingCancelDeviceID: String?
     @State private var hasCurrentResumableBackup: Bool = false
-    @State private var showAppExclusionSheet = false
     @State private var showPreflightSheet = false
     @State private var backupConfig = DeviceBackupConfiguration()
 
@@ -48,14 +47,8 @@ struct DeviceOverviewView: View {
                         configuration: $backupConfig,
                         onStartBackup: {
                             executeBackup(for: device)
-                        },
-                        onCustomizeApps: {
-                            showAppExclusionSheet = true
                         }
                     )
-                }
-                .sheet(isPresented: $showAppExclusionSheet) {
-                    AppExclusionSheet(udid: device.id, configuration: $backupConfig)
                 }
             } else {
                 noDeviceView
