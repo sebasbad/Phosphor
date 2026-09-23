@@ -96,30 +96,52 @@ struct BackupPreflightSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     // Destination Callout
-                    HStack(spacing: 10) {
-                        Image(systemName: "internaldrive.fill")
-                            .foregroundStyle(.secondary)
-                            .font(.system(size: 14))
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "internaldrive.fill")
+                                .foregroundStyle(Color.brandAccent)
+                                .font(.system(size: 15))
+                                .padding(.top, 2)
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Backup Destination")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                            Text(destinationPath)
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Text("Backup Destination")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+
+                                    Spacer()
+
+                                    Text(preferNetwork ? "Wi-Fi" : "USB 3.0 / USB-C")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.primary.opacity(0.06), in: Capsule())
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Text(destinationPath)
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(.primary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .textSelection(.enabled)
+                            }
                         }
 
-                        Spacer()
-
-                        Text(preferNetwork ? "Wi-Fi" : "USB 3.0 / USB-C")
-                            .font(.system(size: 10, weight: .bold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Color.primary.opacity(0.06), in: Capsule())
-                            .foregroundStyle(.secondary)
+                        HStack {
+                            Spacer()
+                            Button("Change Destination...") {
+                                let panel = NSOpenPanel()
+                                panel.title = "Select Backup Destination Directory"
+                                panel.canChooseFiles = false
+                                panel.canChooseDirectories = true
+                                panel.canCreateDirectories = true
+                                panel.allowsMultipleSelection = false
+                                if panel.runModal() == .OK, let url = panel.url {
+                                    backupDirectory = url.path
+                                }
+                            }
+                            .controlSize(.small)
+                        }
                     }
                     .padding(12)
                     .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
@@ -163,23 +185,6 @@ struct BackupPreflightSheet: View {
                     }
                     .padding(12)
                     .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
-
-
-                    // Don't show again preference
-                    Toggle(isOn: $configuration.alwaysUseProfile) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Always use this profile for \(device.name)")
-                                .font(.system(size: 12, weight: .medium))
-                            Text("Skip this screen on future backups. You can re-enable it in Settings.")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .toggleStyle(.checkbox)
-                    .onChange(of: configuration.alwaysUseProfile) { _, _ in
-                        configuration.save(for: device.id)
-                    }
-                    .padding(.top, 4)
                 }
                 .padding(24)
             }
