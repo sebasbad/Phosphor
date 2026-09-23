@@ -428,11 +428,9 @@ enum Shell {
     /// Grace given to a streaming command. `runStreaming` is what drives
     /// idevicebackup2 and pymobiledevice3 backup/restore, which flush and close
     /// the snapshot they are part-way through writing when they take SIGTERM.
-    /// The 50ms this replaced meant they never got there, so a timeout or a
-    /// user cancel amputated the backup. Now that cleanupComplete() reaps, a
-    /// child that exits promptly still returns in milliseconds - this is only
-    /// the ceiling for one that needs the time.
-    static let streamTerminationGrace: TimeInterval = 2.0
+    /// Give Python's multiprocessing.resource_tracker and snapshot writers
+    /// ample time (5.0s) to clean up semaphores and flush before escalating to SIGKILL.
+    static let streamTerminationGrace: TimeInterval = 5.0
 
     private static func terminateTimedOutTree(
         _ tree: ProcessTree,
