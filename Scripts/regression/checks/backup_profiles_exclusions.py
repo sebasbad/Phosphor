@@ -46,6 +46,7 @@ def test_backup_engine_supports_domain_filtering_and_patching(root: Path) -> Non
 def test_app_exclusion_sheet_and_profile_selector_views_exist(root: Path) -> None:
     sheet_src = read(root, "Sources/Phosphor/Views/Backup/AppExclusionSheet.swift")
     selector_src = read(root, "Sources/Phosphor/Views/Backup/BackupProfileSelectorView.swift")
+    preflight_src = read(root, "Sources/Phosphor/Views/Backup/BackupPreflightSheet.swift")
     overview_src = read(root, "Sources/Phosphor/Views/Device/DeviceOverviewView.swift")
 
     assert_contains(sheet_src, "struct AppExclusionSheet: View", "AppExclusionSheet view must exist")
@@ -55,5 +56,6 @@ def test_app_exclusion_sheet_and_profile_selector_views_exist(root: Path) -> Non
     assert_contains(selector_src, "struct BackupProfileSelectorView: View", "BackupProfileSelectorView must exist")
     assert_contains(selector_src, "Backup Profile", "BackupProfileSelectorView must show profile title")
 
-    assert_contains(overview_src, "BackupProfileSelectorView", "DeviceOverviewView must embed BackupProfileSelectorView")
+    assert_contains(preflight_src, "BackupProfileSelectorView", "BackupPreflightSheet must embed BackupProfileSelectorView")
+    assert_contains(overview_src, "BackupPreflightSheet", "DeviceOverviewView must present BackupPreflightSheet on backup action")
     assert_contains(overview_src, "AppExclusionSheet", "DeviceOverviewView must present AppExclusionSheet")

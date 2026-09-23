@@ -24,6 +24,8 @@ struct BackupListView: View {
     @State private var pendingCancelActivityUDID: String?
     @State private var hasCurrentResumableBackup: Bool = false
     @State private var showAppExclusionSheet = false
+    @State private var showPreflightSheet = false
+    @State private var pendingPreflightIncremental = false
     @State private var backupConfig = DeviceBackupConfiguration()
 
     var body: some View {
@@ -184,6 +186,22 @@ struct BackupListView: View {
             BackupScheduleSheet()
                 .frame(width: 480, height: 500)
         }
+        .sheet(isPresented: $showPreflightSheet) {
+            if let device = deviceVM.selectedDevice {
+                BackupPreflightSheet(
+                    device: device,
+                    incremental: pendingPreflightIncremental,
+                    preferNetwork: device.connectionType == .wifi,
+                    configuration: $backupConfig,
+                    onStartBackup: {
+                        startBackup(for: device, incremental: pendingPreflightIncremental)
+                    },
+                    onCustomizeApps: {
+                        showAppExclusionSheet = true
+                    }
+                )
+            }
+        }
         .sheet(isPresented: $showAppExclusionSheet) {
             if let device = deviceVM.selectedDevice {
                 AppExclusionSheet(udid: device.id, configuration: $backupConfig)
@@ -210,26 +228,11 @@ struct BackupListView: View {
             Divider()
 
             if let device = deviceVM.selectedDevice {
-                Menu("Backup Profile (\(backupConfig.profileType.title))") {
-                    ForEach(BackupProfileType.allCases) { profile in
-                        Button {
-                            backupConfig.profileType = profile
-                            backupConfig.save(for: device.id)
-                        } label: {
-                            HStack {
-                                Text(profile.title)
-                                if backupConfig.profileType == profile {
-                                    Image(systemName: "checkmark")
-                                }
-                            }
-                        }
-                    }
-                }
-
                 Button {
-                    showAppExclusionSheet = true
+                    pendingPreflightIncremental = shouldOfferIncremental(for: device)
+                    showPreflightSheet = true
                 } label: {
-                    Label(backupConfig.excludedBundleIds.isEmpty ? "Customize App Data..." : "Customize App Data (\(backupConfig.excludedBundleIds.count) excluded)...", systemImage: "slider.horizontal.3")
+                    Label("Backup Options & Profiles (\(backupConfig.profileType.title))...", systemImage: "slider.horizontal.3")
                 }
 
                 Divider()
