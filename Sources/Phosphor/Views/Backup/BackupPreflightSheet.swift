@@ -3,22 +3,58 @@ import SwiftUI
 /// Pre-flight modal sheet presented when the user initiates a backup (Issue #5).
 /// Decouples profile selection and app exclusion dials from passive overview screens,
 /// adhering to SOTA macOS progressive disclosure standards.
+///
+/// Implements an in-place step transition (Issues #4 & #5) so third-party app
+/// data customization does NOT spawn a secondary stacked sheet, avoiding macOS
+/// AppKit window layering and z-order glitches.
 struct BackupPreflightSheet: View {
     let device: DeviceInfo
     let incremental: Bool
     let preferNetwork: Bool
     @Binding var configuration: DeviceBackupConfiguration
     var onStartBackup: () -> Void
-    var onCustomizeApps: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @AppStorage("phosphor.backupDirectory") private var backupDirectory = BackupManager.defaultBackupDir
+
+    enum PreflightStep {
+        case options
+        case appExclusions
+    }
+
+    @State private var currentStep: PreflightStep = .options
 
     private var destinationPath: String {
         backupDirectory
     }
 
     var body: some View {
+        Group {
+            switch currentStep {
+            case .options:
+                optionsView
+            case .appExclusions:
+                AppExclusionView(
+                    udid: device.id,
+                    configuration: $configuration,
+                    onDismiss: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            currentStep = .options
+                        }
+                    }
+                )
+            }
+        }
+        .frame(
+            width: currentStep == .appExclusions ? 620 : 520,
+            height: 640
+        )
+        .animation(.easeInOut(duration: 0.2), value: currentStep)
+    }
+
+    // MARK: - Options Step View
+
+    private var optionsView: some View {
         VStack(spacing: 0) {
             // Header
             HStack(spacing: 12) {
@@ -99,7 +135,11 @@ struct BackupPreflightSheet: View {
                     BackupProfileSelectorView(
                         udid: device.id,
                         configuration: $configuration,
-                        onCustomizeApps: onCustomizeApps
+                        onCustomizeApps: {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                currentStep = .appExclusions
+                            }
+                        }
                     )
 
                     // App Exclusion Shortcut
@@ -125,7 +165,9 @@ struct BackupPreflightSheet: View {
                         Spacer()
 
                         Button("Customize...") {
-                            onCustomizeApps()
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                currentStep = .appExclusions
+                            }
                         }
                         .controlSize(.small)
                     }
@@ -181,6 +223,5 @@ struct BackupPreflightSheet: View {
             .padding(.vertical, 16)
             .background(Color.groupedBackground.opacity(0.5))
         }
-        .frame(width: 520, height: 640)
     }
 }
