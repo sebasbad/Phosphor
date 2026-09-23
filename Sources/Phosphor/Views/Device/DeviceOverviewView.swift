@@ -625,12 +625,9 @@ struct DeviceOverviewView: View {
             return
         }
 
-        // If user chose to always use this profile, skip pre-flight sheet
-        if backupConfig.alwaysUseProfile {
-            executeBackup(for: device)
-        } else {
-            showPreflightSheet = true
-        }
+        // Always present preflight sheet to give user explicit review and choice
+        backupConfig = DeviceBackupConfiguration()
+        showPreflightSheet = true
     }
 
     private func executeBackup(for device: DeviceInfo) {
