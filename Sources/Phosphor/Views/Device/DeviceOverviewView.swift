@@ -580,6 +580,7 @@ struct DeviceOverviewView: View {
     }
 
     private func hasResumableBackup(for device: DeviceInfo) -> Bool {
+        guard !backupVM.isBackupActive(for: device.id) else { return false }
         if device.id == deviceVM.selectedDevice?.id {
             return hasCurrentResumableBackup
         }
