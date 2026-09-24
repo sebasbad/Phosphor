@@ -769,7 +769,7 @@ struct BackupListView: View {
                             }
                             .buttonStyle(.plain)
                             .help("Dismiss")
-                        } else if activity.isCancelling {
+                        } else if activity.state == .running && activity.isCancelling {
                             Button {
                             } label: {
                                 HStack(spacing: 4) {
