@@ -12,6 +12,7 @@ struct BackupPreflightSheet: View {
     let incremental: Bool
     let preferNetwork: Bool
     @Binding var configuration: DeviceBackupConfiguration
+    var onConfirm: () -> Void = {}
     var onStartBackup: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -201,6 +202,7 @@ struct BackupPreflightSheet: View {
                 Spacer()
 
                 Button {
+                    onConfirm()
                     dismiss()
                     onStartBackup()
                 } label: {
