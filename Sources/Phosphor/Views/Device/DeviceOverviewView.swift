@@ -14,12 +14,6 @@ struct DeviceOverviewView: View {
     @State private var pendingBackupDevice: DeviceInfo?
     @State private var showNonResumableCancelConfirm = false
     @State private var pendingCancelDeviceID: String?
-    @State private var hasCurrentResumableBackup: Bool = false
-    @State private var showPreflightSheet = false
-    @State private var backupConfig = DeviceBackupConfiguration()
-
-    @Binding var selectedSection: SidebarSection?
-    var onShowPreflight: ((DeviceInfo, Bool, Bool, DeviceBackupConfiguration) -> Void)? = nil
 
     var body: some View {
         Group {
@@ -36,9 +30,7 @@ struct DeviceOverviewView: View {
                 }
                 .background(Color.groupedBackground)
                 .task(id: device.id) {
-                    backupConfig = DeviceBackupConfiguration.load(for: device.id)
                     backupVM.loadBackups()
-                    await updateResumableStatus(for: device.id)
                     battery = await diagnostics.getBatteryDiagnostics(udid: device.id)
                     storage = await diagnostics.getStorageBreakdown(udid: device.id)
                 }
@@ -57,44 +49,15 @@ struct DeviceOverviewView: View {
         } message: {
             Text(backupVM.alertMessage)
         }
-        .sheet(item: $backupVM.backupIssue) { issue in
-            BackupIssueSheet(
-                issue: issue,
-                primaryActionTitle: issue.recoveryAction == .resumeBackup ? "Resume Backup" : (issue.recoveryAction == .deleteIncompleteAndRunFull ? "Move to Trash & Run Backup" : (issue.recoveryAction == .runFullBackup ? "Run Full Backup" : "Retry")),
-                primaryAction: {
-                    if issue.recoveryAction == .resumeBackup {
-                        backupVM.backupIssue = nil
-                        Task { await backupVM.resumeBackup(for: issue) }
-                    } else if issue.recoveryAction == .deleteIncompleteAndRunFull {
-                        backupVM.backupIssue = nil
-                        Task { await backupVM.deleteIncompleteBackupAndRunFull(for: issue) }
-                    } else if issue.recoveryAction == .runFullBackup {
-                        backupVM.backupIssue = nil
-                        Task { await backupVM.runFullBackup(for: issue) }
-                    } else {
-                        backupVM.backupIssue = nil
-                        Task { await backupVM.retryBackup(for: issue) }
-                    }
-                },
-                secondaryActionTitle: issue.recoveryAction == .resumeBackup || issue.recoveryAction == .deleteIncompleteAndRunFull ? "Move to Trash Only" : nil,
-                secondaryAction: {
-                    backupVM.backupIssue = nil
-                    Task { await backupVM.deleteIncompleteBackupOnly(for: issue) }
-                },
-                dismiss: { backupVM.backupIssue = nil }
-            )
+        .alert("Backup Issue", isPresented: backupIssuePresented) {
+            Button("OK", role: .cancel) { backupVM.backupIssue = nil }
+        } message: {
+            Text(backupVM.backupIssue.map { "\($0.title)\n\n\($0.message)" } ?? "Backup failed")
         }
         .alert("Full Wi-Fi Backup?", isPresented: $showFullWiFiBackupConfirm) {
             Button("Run Full Wi-Fi Backup") {
                 if let device = pendingBackupDevice {
-                    Task {
-                        await backupVM.createBackup(
-                            udid: device.id,
-                            incremental: false,
-                            preferNetwork: true,
-                            configuration: backupConfig
-                        )
-                    }
+                    Task { await backupVM.createBackup(udid: device.id, incremental: false, preferNetwork: true) }
                 }
                 pendingBackupDevice = nil
             }
@@ -115,6 +78,13 @@ struct DeviceOverviewView: View {
         } message: {
             Text("The backup is currently consolidating and sealing its manifest on disk. This finalization phase is not partially resumable — stopping now will discard this completed backup and require starting fresh. Are you sure you want to stop?")
         }
+    }
+
+    private var backupIssuePresented: Binding<Bool> {
+        Binding(
+            get: { backupVM.backupIssue != nil },
+            set: { if !$0 { backupVM.backupIssue = nil } }
+        )
     }
 
     private var noDeviceView: some View {
@@ -451,25 +421,68 @@ struct DeviceOverviewView: View {
                     }
                     .disabled(deviceVM.isEnablingWiFiSync)
                     .help("Enable Finder's Show this iPhone when on Wi-Fi option for this trusted USB device")
-}
+                }
+            }
+
+            if let activity = backupVM.activity(for: device.id), activity.isActive {
+                VStack(alignment: .leading, spacing: 8) {
+                    if activity.isAwaitingPasscode {
+                        HStack(spacing: 8) {
+                            Image(systemName: "lock.shield.fill")
+                                .foregroundStyle(.orange)
+                                .font(.system(size: 14, weight: .semibold))
+                            Text("Please unlock your device and enter your passcode or tap 'Trust' to proceed...")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(.orange)
+                        }
+                        .padding(.vertical, 4)
+                        .padding(.horizontal, 8)
+                        .background(Color.orange.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+
+                    HStack {
+                        Text(activity.displayProgressText)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Spacer()
+                        Button {
+                            if activity.isNonResumableFinalizationPhase {
+                                pendingCancelDeviceID = device.id
+                                showNonResumableCancelConfirm = true
+                            } else {
+                                backupVM.cancelBackup(udid: device.id)
+                            }
+                        } label: {
+                            Label("Pause & Save", systemImage: "pause.circle")
+                        }
+                        .controlSize(.small)
+                        .help(activity.isNonResumableFinalizationPhase ? "Warning: Finalization is non-resumable. Stopping now will abort this completed backup." : "Stops the backup and saves progress. You can resume later.")
+                    }
+                    ProgressView(
+                        value: activity.displayProgressFraction,
+                        total: 1.0
+                    )
+                    .progressViewStyle(.linear)
+                    .tint(activity.isAwaitingPasscode ? .orange : .brandAccent)
+
+                    Text(activity.isFinalizing ? (activity.finalizationMetrics != nil ? "Reorganizing files from snapshot onto disk. Do not disconnect." : "Consolidating files and sealing backup manifest on disk...") : "Progress is saved automatically. You can resume later.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if device.connectionType == .usb {
+                Text("Enable Wi-Fi turns on Finder's \"Show this iPhone when on Wi-Fi\" option. After it succeeds, unplug the cable, keep the device unlocked, then scan again.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .cardStyle()
     }
 
     // MARK: - Helpers
-
-    private func updateResumableStatus(for udid: String) async {
-        let isResumable = await Task.detached(priority: .utility) { () -> Bool in
-            if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: udid) {
-                return BackupManager.incompleteBackupHasPayloadData(path)
-            }
-            return false
-        }.value
-        await MainActor.run {
-            self.hasCurrentResumableBackup = isResumable
-        }
-    }
 
     private func hasCompleteBackup(for device: DeviceInfo) -> Bool {
         BackupManager.hasExistingBackup(for: device.id) && backupVM.backups.contains { backup in
@@ -478,10 +491,6 @@ struct DeviceOverviewView: View {
     }
 
     private func hasResumableBackup(for device: DeviceInfo) -> Bool {
-        guard !backupVM.isBackupActive(for: device.id) else { return false }
-        if device.id == deviceVM.selectedDevice?.id {
-            return hasCurrentResumableBackup
-        }
         if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: device.id) {
             return BackupManager.incompleteBackupHasPayloadData(path)
         }
@@ -507,19 +516,9 @@ struct DeviceOverviewView: View {
 
     private func startBackup(for device: DeviceInfo) {
         if hasResumableBackup(for: device) {
-            selectedSection = .backups
             Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi, device: device) }
             return
         }
-
-        // Trigger preflight sheet from parent (ContentView level)
-        let incremental = device.connectionType == .wifi && hasCompleteBackup(for: device)
-        let preferNetwork = device.connectionType == .wifi
-        let config = DeviceBackupConfiguration.load(for: device.id)
-        onShowPreflight?(device, incremental, preferNetwork, config)
-    }
-
-    private func executeBackup(for device: DeviceInfo) {
         let preferNetwork = device.connectionType == .wifi
         let incremental = preferNetwork && hasCompleteBackup(for: device)
         if preferNetwork && !incremental {
@@ -527,14 +526,7 @@ struct DeviceOverviewView: View {
             showFullWiFiBackupConfirm = true
             return
         }
-        Task {
-            await backupVM.createBackup(
-                udid: device.id,
-                incremental: incremental,
-                preferNetwork: preferNetwork,
-                configuration: backupConfig
-            )
-        }
+        Task { await backupVM.createBackup(udid: device.id, incremental: incremental, preferNetwork: preferNetwork) }
     }
 
     private func copyableInfoRow(label: String, value: String, icon: String) -> some View {

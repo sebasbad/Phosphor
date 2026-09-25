@@ -22,13 +22,6 @@ struct BackupListView: View {
     @State private var isLoadingIncompleteStats = false
     @State private var showNonResumableCancelConfirm = false
     @State private var pendingCancelActivityUDID: String?
-    @State private var hasCurrentResumableBackup: Bool = false
-    @State private var showAppExclusionSheet = false
-    @State private var showPreflightSheet = false
-    @State private var pendingPreflightIncremental = false
-    @State private var backupConfig = DeviceBackupConfiguration()
-    @State private var showDeleteIncompleteConfirm = false
-    @State private var pendingDeleteIncompleteIssue: BackupManager.BackupFailure?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,33 +40,30 @@ struct BackupListView: View {
                 Spacer()
 
                 newBackupMenu
-                    .fixedSize()
-                    .controlSize(.regular)
+                .buttonStyle(.borderedProminent)
+                .tint(deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true ? .orange : .brandAccent)
 
                 Button {
                     backupVM.loadBackups()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
             }
             .padding(20)
 
             Divider()
 
+            backupStateNotice
+
+            if !activeBackupActivities.isEmpty {
+                backupActivityList
+            }
+
+            if let err = backupVM.loadError, backupVM.backups.isEmpty {
+                backupLoadErrorBanner(err)
+            }
+
             if backupVM.backups.isEmpty {
-                backupStateNotice
-
-                if !visibleBackupActivities.isEmpty {
-                    backupActivityList
-                        .padding(.horizontal, 16)
-                }
-
-                if let err = backupVM.loadError {
-                    backupLoadErrorBanner(err)
-                }
-
                 if let device = deviceVM.selectedDevice, hasResumableBackup(for: device), !backupVM.isBackupActive(for: device.id) {
                     resumableBackupHeroCard(for: device)
                 } else if activeBackupActivities.isEmpty {
@@ -92,60 +82,19 @@ struct BackupListView: View {
                     Spacer(minLength: 0)
                 }
             } else {
-                ScrollViewReader { proxy in
-                    List {
-                        // Zero-height anchor so we can always reset scroll to the top
-                        // without adding visual space. Fixes the macOS SwiftUI List
-                        // stale-offset bug that clips the first row under the header.
-                        Color.clear
-                            .frame(height: 0)
-                            .listRowSeparator(.hidden)
-                            .listRowInsets(.init())
-                            .id("backupListTop")
-
-                        if !visibleBackupActivities.isEmpty {
-                            backupActivityList
-                                .listRowSeparator(.visible)
-                        }
-
-                        // Resumable backup row — rendered as a native list row so it shares
-                        // the same width, insets, and visual weight as completed BackupRows.
-                        if let device = deviceVM.selectedDevice,
-                           hasResumableBackup(for: device),
-                           !backupVM.isBackupActive(for: device.id),
-                           visibleBackupActivities.allSatisfy({ $0.udid != device.id }) {
-                            resumableBackupListRow(for: device)
-                                .listRowSeparator(.visible)
-                        }
-
-                        if let err = backupVM.loadError {
-                            backupLoadErrorBanner(err)
-                                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                                .listRowSeparator(.hidden)
-                        }
-
-                        ForEach(backupVM.backups) { backup in
-                            BackupRow(backup: backup) {
-                                if backupVM.openBackupBrowser(backup) {
-                                    onBrowseBackup()
-                                }
-                            } onDelete: {
-                                backupToDelete = backup
-                                showDeleteConfirm = true
+                List {
+                    ForEach(backupVM.backups) { backup in
+                        BackupRow(backup: backup) {
+                            if backupVM.openBackupBrowser(backup) {
+                                onBrowseBackup()
                             }
+                        } onDelete: {
+                            backupToDelete = backup
+                            showDeleteConfirm = true
                         }
-                    }
-                    .listStyle(.inset)
-                    .onAppear {
-                        proxy.scrollTo("backupListTop", anchor: .top)
-                    }
-                    .onChange(of: visibleBackupActivities.count) {
-                        proxy.scrollTo("backupListTop", anchor: .top)
-                    }
-                    .onChange(of: backupVM.backups.count) {
-                        proxy.scrollTo("backupListTop", anchor: .top)
                     }
                 }
+                .listStyle(.inset)
             }
         }
         .alert("Delete Backup?", isPresented: $showDeleteConfirm) {
@@ -192,38 +141,11 @@ struct BackupListView: View {
         } message: {
             Text(incompleteBackupTrashConfirmationMessage)
         }
-        .alert("Delete Partial Backup?", isPresented: $showDeleteIncompleteConfirm) {
-            Button("Move to Trash", role: .destructive) {
-                if let issue = pendingDeleteIncompleteIssue {
-                    Task {
-                        await backupVM.deleteIncompleteBackupOnly(for: issue)
-                        hasCurrentResumableBackup = false
-                        cachedIncompleteStats = nil
-                    }
-                }
-                pendingDeleteIncompleteIssue = nil
-            }
-            Button("Cancel", role: .cancel) {
-                pendingDeleteIncompleteIssue = nil
-            }
-        } message: {
-            if let issue = pendingDeleteIncompleteIssue {
-                let path = issue.recoveryPath ?? issue.technicalDetails ?? "Unknown path"
-                Text("This will move the partial backup data to Trash.\n\n\(path)\n\nYou can restore it from Trash if needed. The device will be clean — start a new backup when ready.")
-            }
-        }
         .alert("Full Wi-Fi Backup?", isPresented: $showFullWiFiBackupConfirm) {
             Button("Run Full Wi-Fi Backup") {
                 if let udid = pendingFullWiFiBackupUDID {
                     let preferNetwork = pendingFullWiFiBackupPrefersNetwork
-                    Task {
-                        await backupVM.createBackup(
-                            udid: udid,
-                            incremental: false,
-                            preferNetwork: preferNetwork,
-                            configuration: backupConfig
-                        )
-                    }
+                    Task { await backupVM.createBackup(udid: udid, incremental: false, preferNetwork: preferNetwork) }
                 }
                 pendingFullWiFiBackupUDID = nil
                 pendingFullWiFiBackupPrefersNetwork = false
@@ -252,36 +174,7 @@ struct BackupListView: View {
             BackupScheduleSheet()
                 .frame(width: 480, height: 500)
         }
-        .sheet(isPresented: $showPreflightSheet) {
-            if let device = deviceVM.selectedDevice {
-                BackupPreflightSheet(
-                    device: device,
-                    incremental: pendingPreflightIncremental,
-                    preferNetwork: device.connectionType == .wifi,
-                    configuration: $backupConfig,
-                    onStartBackup: {
-                        startBackup(for: device, incremental: pendingPreflightIncremental)
-                    }
-                )
-            }
-        }
-        .sheet(isPresented: $showAppExclusionSheet) {
-            if let device = deviceVM.selectedDevice {
-                AppExclusionSheet(udid: device.id, configuration: $backupConfig)
-            }
-        }
-        .onAppear {
-            if let device = deviceVM.selectedDevice {
-                backupConfig = DeviceBackupConfiguration.load(for: device.id)
-            }
-            backupVM.loadBackups()
-        }
-        .task(id: deviceVM.selectedDevice?.id) {
-            if let newUDID = deviceVM.selectedDevice?.id {
-                backupConfig = DeviceBackupConfiguration.load(for: newUDID)
-            }
-            await updateResumableStatus()
-        }
+        .onAppear { backupVM.loadBackups() }
     }
 
     private var newBackupMenu: some View {
@@ -289,17 +182,6 @@ struct BackupListView: View {
             backupCreationButtons
 
             Divider()
-
-            if let device = deviceVM.selectedDevice {
-                Button {
-                    pendingPreflightIncremental = shouldOfferIncremental(for: device)
-                    showPreflightSheet = true
-                } label: {
-                    Label("Backup Options & Profiles (\(backupConfig.profileType.title))...", systemImage: "slider.horizontal.3")
-                }
-
-                Divider()
-            }
 
             Button {
                 importPhosphorArchive()
@@ -321,7 +203,11 @@ struct BackupListView: View {
                 Label("Schedule Backups...", systemImage: "clock")
             }
         } label: {
-            Label("New Backup", systemImage: "plus")
+            if let device = deviceVM.selectedDevice, hasResumableBackup(for: device) {
+                Label("Resume Backup", systemImage: "play.circle.fill")
+            } else {
+                Label("New Backup", systemImage: "plus")
+            }
         }
     }
 
@@ -332,22 +218,6 @@ struct BackupListView: View {
                 switch (lhs.state, rhs.state) {
                 case (.running, .queued): true
                 case (.queued, .running): false
-                default: lhs.udid < rhs.udid
-                }
-            }
-    }
-
-    private var visibleBackupActivities: [BackupViewModel.BackupActivity] {
-        backupVM.backupActivities.values
-            .filter { $0.isActive || $0.state == .cancelled }
-            .sorted { lhs, rhs in
-                switch (lhs.state, rhs.state) {
-                case (.running, .queued): true
-                case (.queued, .running): false
-                case (.running, .cancelled): true
-                case (.queued, .cancelled): true
-                case (.cancelled, .running): false
-                case (.cancelled, .queued): false
                 default: lhs.udid < rhs.udid
                 }
             }
@@ -374,81 +244,18 @@ struct BackupListView: View {
     private var backupStateNotice: some View {
         if let device = deviceVM.selectedDevice {
             // Suppress banner notice when the empty state already acts as the dedicated resumable hero card
-            // or when a backup for this device is already actively running or docked in the activity list
-            let hasDockedActivity = visibleBackupActivities.contains { $0.udid == device.id }
-            if (backupVM.backups.isEmpty && hasCurrentResumableBackup) || hasDockedActivity {
+            if backupVM.backups.isEmpty && hasResumableBackup(for: device) {
                 EmptyView()
             } else {
                 let state = backupState(for: device)
-                if hasResumableBackup(for: device) {
-                    BackupStateNotice(
-                        title: state.title,
-                        detail: state.detail,
-                        icon: state.icon,
-                        tint: state.tint,
-                        stats: cachedIncompleteStats,
-                        primaryActionTitle: "Resume",
-                        primaryAction: {
-                            Task {
-                                await backupVM.resumeBackup(
-                                    udid: device.id,
-                                    preferNetwork: device.connectionType == .wifi,
-                                    device: device
-                                )
-                            }
-                        },
-                        secondaryActionTitle: "Discard...",
-                        secondaryAction: {
-                            if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: device.id) {
-                                pendingIncompleteBackupIssue = BackupManager.BackupFailure(
-                                    title: "Discard Incomplete Backup",
-                                    message: "Move preserved partial data to Trash and run a fresh backup.",
-                                    technicalDetails: path,
-                                    recoveryAction: .deleteIncompleteAndRunFull,
-                                    udid: device.id,
-                                    recoveryPath: path
-                                )
-                                showIncompleteBackupTrashConfirm = true
-                            }
-                        }
-                    )
-                    .padding(.horizontal, 16)
-                    .padding(.top, 10)
-                } else {
-                    BackupStateNotice(title: state.title, detail: state.detail, icon: state.icon, tint: state.tint)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 10)
-                }
+                BackupStateNotice(title: state.title, detail: state.detail, icon: state.icon, tint: state.tint)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 12)
             }
-        }
-    }
-
-    private func updateResumableStatus() async {
-        guard let device = deviceVM.selectedDevice else {
-            hasCurrentResumableBackup = false
-            return
-        }
-        let udid = device.id
-        let isResumable = await Task.detached(priority: .utility) { () -> Bool in
-            if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: udid) {
-                return BackupManager.incompleteBackupHasPayloadData(path)
-            }
-            return false
-        }.value
-        await MainActor.run {
-            self.hasCurrentResumableBackup = isResumable
-        }
-        if isResumable && cachedIncompleteStats == nil {
-            await loadIncompleteStatsInBackground(for: udid)
         }
     }
 
     private func hasResumableBackup(for device: DeviceInfo) -> Bool {
-        // If a backup is actively transferring or finalizing right now, it is not an interrupted backup
-        guard !backupVM.isBackupActive(for: device.id) else { return false }
-        if device.id == deviceVM.selectedDevice?.id {
-            return hasCurrentResumableBackup
-        }
         if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: device.id) {
             return BackupManager.incompleteBackupHasPayloadData(path)
         }
@@ -489,116 +296,6 @@ struct BackupListView: View {
             "cable.connector",
             .green
         )
-    }
-
-    /// A native-list-row representation of the interrupted/paused backup for the selected device.
-    /// Shares the exact same HStack layout, GradientIconTile size, and typography as `BackupRow`
-    /// so it blends seamlessly into the backup list alongside completed backup entries.
-    @ViewBuilder
-    private func resumableBackupListRow(for device: DeviceInfo) -> some View {
-        HStack(spacing: 14) {
-            GradientIconTile(
-                systemName: device.productType.hasPrefix("iPad") ? "ipad" : "iphone",
-                color: .orange,
-                size: 44,
-                iconSize: 20
-            )
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(device.name)
-                        .font(.system(size: 14, weight: .medium))
-                        .lineLimit(1)
-
-                    StatusChip(text: "Paused", color: .orange)
-                }
-
-                Text(device.displayModelName)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-
-                if let stats = cachedIncompleteStats {
-                    let fraction: Double? = {
-                        let f = stats.completionFraction(for: device)
-                        return f.map { min($0, 0.99) }
-                    }()
-                    HStack(spacing: 6) {
-                        if let fraction {
-                            Text("\(Int(fraction * 100))% saved")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.orange)
-                            Text("·")
-                                .foregroundStyle(.secondary.opacity(0.5))
-                        }
-                        Text("\(stats.fileCount.formatted()) files (\(stats.formattedSize))")
-                        Text("·")
-                            .foregroundStyle(.secondary.opacity(0.5))
-                        Text("Paused \(stats.relativeTimeDescription)")
-                    }
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                } else if isLoadingIncompleteStats {
-                    Label("Reading saved files…", systemImage: "clock")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                } else {
-                    Text("Interrupted backup – resume to continue")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-
-            Spacer()
-
-            HStack(spacing: 8) {
-                Button {
-                    Task {
-                        await backupVM.resumeBackup(
-                            udid: device.id,
-                            preferNetwork: device.connectionType == .wifi,
-                            device: device
-                        )
-                    }
-                } label: {
-                    Label("Resume", systemImage: "play.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.orange)
-                .controlSize(.small)
-
-                Menu {
-                    Button("Show in Finder") {
-                        if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: device.id) {
-                            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path)
-                        }
-                    }
-
-                    Divider()
-
-                    Button("Delete Backup", role: .destructive) {
-                        if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: device.id) {
-                            pendingDeleteIncompleteIssue = BackupManager.BackupFailure(
-                                title: "Delete Partial Backup",
-                                message: "Move the partial backup data to Trash.",
-                                technicalDetails: path,
-                                recoveryAction: nil,
-                                udid: device.id,
-                                recoveryPath: path
-                            )
-                            showDeleteIncompleteConfirm = true
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .menuStyle(.borderlessButton)
-                .frame(width: 24)
-            }
-        }
-        .padding(.vertical, 6)
-        .task(id: device.id) {
-            await loadIncompleteStatsInBackground(for: device.id)
-        }
     }
 
     @ViewBuilder
@@ -900,14 +597,7 @@ struct BackupListView: View {
             showFullWiFiBackupConfirm = true
             return
         }
-        Task {
-            await backupVM.createBackup(
-                udid: device.id,
-                incremental: incremental,
-                preferNetwork: device.connectionType == .wifi,
-                configuration: backupConfig
-            )
-        }
+        Task { await backupVM.createBackup(udid: device.id, incremental: incremental, preferNetwork: device.connectionType == .wifi) }
     }
 
     private func importPhosphorArchive() {
@@ -941,118 +631,72 @@ struct BackupListView: View {
 
     private var backupActivityList: some View {
         VStack(spacing: 0) {
-            ForEach(visibleBackupActivities, id: \.id) { activity in
-                let isPaused = activity.state == .cancelled
-                let isCancelling = activity.state == .cancelling
-                let tintColor: Color = (isPaused || isCancelling) ? .orange : .brandAccent
-
-                HStack(spacing: 14) {
-                    GradientIconTile(
-                        systemName: isPaused ? "pause.circle.fill" : (activity.isFinalizing ? "arrow.triangle.2.circlepath.circle.fill" : "externaldrive.badge.timemachine"),
-                        color: (isPaused || isCancelling) ? .orange : .blue,
-                        size: 44,
-                        iconSize: 20
-                    )
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
+            ForEach(activeBackupActivities) { activity in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: activity.state == .running ? (activity.isFinalizing ? "arrow.triangle.2.circlepath.circle.fill" : "externaldrive.badge.timemachine") : "clock")
+                            .foregroundStyle(Color.brandAccent)
+                        VStack(alignment: .leading, spacing: 2) {
                             Text(deviceIdentity(for: activity.udid))
-                                .font(.system(size: 14, weight: .medium))
+                                .font(.system(size: 13, weight: .semibold))
+                            Text(activity.displayProgressText)
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
                                 .lineLimit(1)
-
-                            StatusChip(
-                                text: isPaused ? "Paused" : (isCancelling ? "Pausing" : (activity.isFinalizing ? "Finalizing" : "Backing Up")),
-                                color: tintColor
-                            )
                         }
-
-                        if case .running = activity.state, activity.isAwaitingPasscode {
-                            HStack(spacing: 6) {
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("\(deviceIdentity(for: activity.udid)), \(activity.displayProgressText)")
+                        Spacer()
+                        Button {
+                            if activity.isNonResumableFinalizationPhase {
+                                pendingCancelActivityUDID = activity.udid
+                                showNonResumableCancelConfirm = true
+                            } else {
+                                backupVM.cancelBackup(udid: activity.udid)
+                            }
+                        } label: {
+                            Label("Pause & Save", systemImage: "pause.circle")
+                        }
+                        .controlSize(.small)
+                        .help(activity.isNonResumableFinalizationPhase ? "Warning: Finalization is non-resumable. Stopping now will abort this completed backup." : "Stops the backup and saves progress. You can resume later.")
+                        .accessibilityLabel("Cancel backup for \(deviceIdentity(for: activity.udid))")
+                    }
+                    if case .running = activity.state {
+                        if activity.isAwaitingPasscode {
+                            HStack(spacing: 8) {
                                 Image(systemName: "lock.shield.fill")
                                     .foregroundStyle(.orange)
-                                    .font(.system(size: 11))
-                                Text("Unlock device and enter passcode...")
+                                    .font(.system(size: 14, weight: .semibold))
+                                Text("Please unlock your device and enter your passcode or tap 'Trust' to proceed...")
                                     .font(.system(size: 11, weight: .medium))
                                     .foregroundStyle(.orange)
                             }
-                        } else {
-                            HStack(spacing: 8) {
-                                Text(activity.displayProgressText)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(isPaused ? .orange : .secondary)
-
-                                if let eta = activity.eta, !eta.isEmpty {
-                                    Text("•")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(.secondary.opacity(0.6))
-                                    Text("Est. \(eta)")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
+                            .padding(.vertical, 4)
+                            .padding(.horizontal, 8)
+                            .background(Color.orange.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
                         }
 
-                        ProgressView(value: activity.displayProgressFraction, total: 1.0)
+                        VStack(alignment: .leading, spacing: 4) {
+                            ProgressView(
+                                value: activity.displayProgressFraction,
+                                total: 1.0
+                            )
                             .progressViewStyle(.linear)
-                            .tint(isPaused ? .orange : .brandAccent)
-                            .frame(maxWidth: 340)
+                            .tint(activity.isAwaitingPasscode ? .orange : .brandAccent)
 
-                        Text(isPaused ? "Progress is saved. Click Resume anytime to continue." : (activity.isFinalizing ? "Consolidating files and sealing backup manifest on disk..." : "Progress is saved automatically. You can pause anytime."))
-                            .font(.system(size: 10))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(deviceIdentity(for: activity.udid)), \(activity.displayProgressText)")
-
-                    Spacer()
-
-                    HStack(spacing: 8) {
-                        if isPaused {
-                            Button {
-                                if let device = deviceVM.devices.first(where: { $0.id == activity.udid }) {
-                                    Task { await backupVM.resumeBackup(udid: activity.udid, preferNetwork: device.connectionType == .wifi, device: device) }
-                                } else {
-                                    Task { await backupVM.resumeBackup(udid: activity.udid, preferNetwork: false) }
-                                }
-                            } label: {
-                                Label("Resume", systemImage: "play.fill")
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.orange)
-                            .controlSize(.small)
-                        } else if isCancelling {
-                            HStack(spacing: 6) {
-                                ProgressView()
-                                    .controlSize(.mini)
-                                Text("Pausing...")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(Color.secondary.opacity(0.12), in: Capsule())
-                            .accessibilityLabel("Pausing backup for \(deviceIdentity(for: activity.udid))")
-                        } else {
-                            Button {
-                                if activity.isNonResumableFinalizationPhase {
-                                    pendingCancelActivityUDID = activity.udid
-                                    showNonResumableCancelConfirm = true
-                                } else {
-                                    backupVM.cancelBackup(udid: activity.udid)
-                                }
-                            } label: {
-                                Label("Pause & Save", systemImage: "pause.circle")
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .help(activity.isNonResumableFinalizationPhase ? "Warning: Finalization is non-resumable. Stopping now will abort this completed backup." : "Stops the backup and saves progress. You can resume later.")
-                            .accessibilityLabel("Cancel backup for \(deviceIdentity(for: activity.udid))")
+                            Text(activity.isFinalizing ? (activity.finalizationMetrics != nil ? "Reorganizing files from snapshot onto disk. Do not disconnect." : "Consolidating files and sealing backup manifest on disk...") : "Progress is saved automatically. You can stop or unplug and resume later.")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
-                .padding(.vertical, 8)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                if activity.id != activeBackupActivities.last?.id { Divider() }
             }
         }
+        .background(Color.brandAccent.opacity(0.06))
     }
 
     private func deviceIdentity(for udid: String) -> String {
@@ -1095,102 +739,27 @@ struct BackupStateNotice: View {
     let detail: String
     let icon: String
     let tint: Color
-    var stats: BackupManager.IncompleteBackupStats? = nil
-    var primaryActionTitle: String? = nil
-    var primaryAction: (() -> Void)? = nil
-    var secondaryActionTitle: String? = nil
-    var secondaryAction: (() -> Void)? = nil
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ViewThatFits(in: .horizontal) {
-                // Wide window: single row with content on left, actions on right
-                HStack(alignment: .center, spacing: 12) {
-                    headerContent
-                    Spacer(minLength: 16)
-                    actionButtons
-                }
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(tint)
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 20)
 
-                // Compact window: stacked
-                VStack(alignment: .leading, spacing: 10) {
-                    headerContent
-                    HStack {
-                        Spacer()
-                        actionButtons
-                    }
-                }
-            }
-
-            if let stats {
-                HStack(spacing: 8) {
-                    Text("\(stats.fileCount.formatted()) files saved (\(stats.formattedSize))")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(tint)
-
-                    Text("•")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary.opacity(0.6))
-
-                    Text("Paused \(stats.relativeTimeDescription)")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.leading, 36)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(tint.opacity(0.07))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(tint.opacity(0.20), lineWidth: 1)
-        )
-    }
-
-    private var headerContent: some View {
-        HStack(alignment: .center, spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(tint.opacity(0.16))
-                    .frame(width: 24, height: 24)
-                Image(systemName: icon)
-                    .foregroundStyle(tint)
-                    .font(.system(size: 13, weight: .bold))
-            }
-
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.primary)
                 Text(detail)
-                    .font(.system(size: 11.5))
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                    .lineLimit(2)
             }
-        }
-    }
 
-    @ViewBuilder
-    private var actionButtons: some View {
-        if let primaryActionTitle, let primaryAction {
-            HStack(spacing: 8) {
-                if let secondaryActionTitle, let secondaryAction {
-                    Button(secondaryActionTitle, role: .destructive, action: secondaryAction)
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                }
-
-                Button(action: primaryAction) {
-                    Label(primaryActionTitle, systemImage: "play.fill")
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(tint)
-                .controlSize(.small)
-            }
+            Spacer()
         }
+        .padding(12)
+        .background(tint.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -1233,29 +802,19 @@ struct BackupIssueSheet: View {
                 }
             }
 
-            HStack(spacing: 12) {
+            HStack {
                 if let secondaryActionTitle, let secondaryAction {
-                    Button(secondaryActionTitle) {
+                    Button(secondaryActionTitle, role: .destructive) {
                         secondaryAction()
                     }
-                    .buttonStyle(.bordered)
-                    .tint(.secondary)
                 }
-
                 Spacer()
-
                 Button("Cancel") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-
                 if let primaryActionTitle {
-                    let isDestructive = issue.recoveryAction == .deleteIncompleteAndRunFull
-                    Button(primaryActionTitle) {
+                    Button(primaryActionTitle, role: issue.recoveryAction == .deleteIncompleteAndRunFull ? .destructive : nil) {
                         primaryAction()
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(isDestructive ? Color.red : Color.brandAccent)
-                    .foregroundStyle(.white)
-                    .keyboardShortcut(.defaultAction)
                 }
             }
         }

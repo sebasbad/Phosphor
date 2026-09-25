@@ -9,10 +9,82 @@ final class BackupViewModel: ObservableObject {
         enum State: Equatable {
             case queued(position: Int)
             case running
-            case cancelling
             case completed
             case failed
             case cancelled
+        }
+
+        enum Phase: String, CaseIterable, Equatable {
+            case unknown
+            case sanitization
+            case incrementalResume
+            case fullBackup
+            case fallbackIdevicebackup2
+            case finalization
+            case verification
+            case completed
+            case failed
+            case cancelled
+
+            var displayName: String {
+                switch self {
+                case .unknown: return "Detecting..."
+                case .sanitization: return "Sanitizing"
+                case .incrementalResume: return "Resuming Backup"
+                case .fullBackup: return "Full Backup"
+                case .fallbackIdevicebackup2: return "Fallback Backup"
+                case .finalization: return "Finalizing"
+                case .verification: return "Verifying"
+                case .completed: return "Completed"
+                case .failed: return "Failed"
+                case .cancelled: return "Paused"
+                }
+            }
+
+            var systemImage: String {
+                switch self {
+                case .unknown: return "questionmark.circle"
+                case .sanitization: return "gearshape.2.fill"
+                case .incrementalResume: return "arrow.clockwise.circle.fill"
+                case .fullBackup: return "externaldrive.badge.plus"
+                case .fallbackIdevicebackup2: return "exclamationmark.triangle.fill"
+                case .finalization: return "arrow.triangle.2.circlepath.circle.fill"
+                case .verification: return "checkmark.shield.fill"
+                case .completed: return "checkmark.circle.fill"
+                case .failed: return "xmark.circle.fill"
+                case .cancelled: return "pause.circle.fill"
+                }
+            }
+
+            var color: Color {
+                switch self {
+                case .unknown: return .secondary
+                case .sanitization: return .blue
+                case .incrementalResume: return .orange
+                case .fullBackup: return .brandAccent
+                case .fallbackIdevicebackup2: return .yellow
+                case .finalization: return .purple
+                case .verification: return .green
+                case .completed: return .green
+                case .failed: return .red
+                case .cancelled: return .orange
+                }
+            }
+
+            var description: String {
+                switch self {
+                case .unknown: return "Detecting backup phase..."
+                case .sanitization: return "Cleaning corrupted plists, checkpointing SQLite WAL"
+                case .incrementalResume: return "Delta resume - transferring changed files only"
+                case .fullBackup: return "Initial full backup of all selected domains"
+                case .fallbackIdevicebackup2: return "Using idevicebackup2 fallback"
+                case .finalization: return "Writing Manifest.db, sealing backup"
+                case .verification: return "Verifying backup integrity"
+                case .completed: return "Backup completed successfully"
+                case .failed: return "Backup failed"
+                case .cancelled: return "Backup paused - progress saved"
+                }
+            }
         }
 
         var id: String { udid }
@@ -27,11 +99,18 @@ final class BackupViewModel: ObservableObject {
         var isAwaitingPasscode: Bool = false
         var errorMessage: String?
 
+        // Enhanced phase tracking
+        var phase: Phase = .unknown
+        var manifestSizeBytes: Int64 = 0
+        var lastSizeUpdate: Date?
+        var processAlive: Bool = true
+        var lastProgressUpdate: Date = Date()
+
         var finalizationMetrics: FinalizationProgressTracker.Metrics?
 
         var isActive: Bool {
             switch state {
-            case .queued, .running, .cancelling: true
+            case .queued, .running: true
             case .completed, .failed, .cancelled: false
             }
         }
@@ -50,13 +129,36 @@ final class BackupViewModel: ObservableObject {
             return false
         }
 
+        var phaseDisplayName: String {
+            phase.displayName
+        }
+
+        var phaseDescription: String {
+            phase.description
+        }
+
+        var phaseIcon: String {
+            phase.systemImage
+        }
+
+        var phaseColor: Color {
+            phase.color
+        }
+
+        var isStalled: Bool {
+            guard case .running = state else { return false }
+            guard let lastUpdate = lastSizeUpdate else { return false }
+            return Date().timeIntervalSince(lastUpdate) > 300 // 5 minutes
+        }
+
+        var isProcessAlive: Bool {
+            processAlive && (Date().timeIntervalSince(lastProgressUpdate) < 60)
+        }
+
         var displayProgressText: String {
             switch state {
             case .queued(let position): return "Queued · #\(position)"
             case .running:
-                if case .cancelling = state {
-                    return "Pausing (Saving progress)..."
-                }
                 var components: [String] = []
                 if isFinalizing {
                     let pct = Int(displayProgressFraction * 100)
@@ -82,8 +184,13 @@ final class BackupViewModel: ObservableObject {
                         components.append("Finalizing \(pct)%")
                         components.append("Reorganizing & verifying files...")
                     }
-                } else if isResume && speed == nil && eta == nil && (progressFraction ?? 0.0) <= resumeBaselineFraction {
-                    components.append("Resuming · Preparing...")
+                } else if isResume {
+                    let pct = Int(displayProgressFraction * 100)
+                    if resumeBaselineFraction > 0 {
+                        components.append("Resuming \(pct)%")
+                    } else {
+                        components.append("Resuming · Preparing...")
+                    }
                 } else {
                     let pct = Int(displayProgressFraction * 100)
                     components.append("Backing up \(pct)%")
@@ -97,16 +204,9 @@ final class BackupViewModel: ObservableObject {
                     }
                 }
                 return components.joined(separator: " · ")
-            case .cancelling:
-                return "Pausing (Saving progress)..."
             case .completed: return "Completed"
             case .failed: return "Failed"
-            case .cancelled:
-                let pct = Int(displayProgressFraction * 100)
-                if pct > 0 {
-                    return "Paused at \(pct)% · Progress saved"
-                }
-                return "Paused · Progress saved"
+            case .cancelled: return "Cancelled"
             }
         }
 
@@ -186,7 +286,6 @@ final class BackupViewModel: ObservableObject {
         let encrypted: Bool
         let isResume: Bool
         let device: DeviceInfo?
-        let configuration: DeviceBackupConfiguration?
 
         init(
             id: UUID = UUID(),
@@ -195,8 +294,7 @@ final class BackupViewModel: ObservableObject {
             preferNetwork: Bool = false,
             encrypted: Bool = false,
             isResume: Bool = false,
-            device: DeviceInfo? = nil,
-            configuration: DeviceBackupConfiguration? = nil
+            device: DeviceInfo? = nil
         ) {
             self.id = id
             self.udid = udid
@@ -205,7 +303,6 @@ final class BackupViewModel: ObservableObject {
             self.encrypted = encrypted
             self.isResume = isResume
             self.device = device
-            self.configuration = configuration
         }
     }
 
@@ -214,20 +311,13 @@ final class BackupViewModel: ObservableObject {
         let continuation: CheckedContinuation<Void, Never>
     }
 
-    private var backupDiscoveryTask: Task<Void, Never>?
-
     func loadBackups() {
         sizeResolutionTask?.cancel()
-        backupDiscoveryTask?.cancel()
-        backupDiscoveryTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.backupManager.discoverBackupsAsync()
-            guard !Task.isCancelled else { return }
-            self.backups = self.backupManager.backups
-            self.loadError = self.backupManager.lastError
-            self.reconcileSelectedBackupAfterReload()
-            self.resolveBackupSizesInBackground(for: self.backups)
-        }
+        backupManager.discoverBackups()
+        backups = backupManager.backups
+        loadError = backupManager.lastError
+        reconcileSelectedBackupAfterReload()
+        resolveBackupSizesInBackground(for: backups)
     }
 
     private func reconcileSelectedBackupAfterReload() {
@@ -286,7 +376,7 @@ final class BackupViewModel: ObservableObject {
         }
     }
 
-    func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false, encrypted: Bool = false, isResume: Bool = false, device: DeviceInfo? = nil, configuration: DeviceBackupConfiguration? = nil) async {
+    func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false, encrypted: Bool = false, isResume: Bool = false, device: DeviceInfo? = nil) async {
         let request = BackupRequest(
             id: UUID(),
             udid: udid,
@@ -294,8 +384,7 @@ final class BackupViewModel: ObservableObject {
             preferNetwork: preferNetwork,
             encrypted: encrypted,
             isResume: isResume,
-            device: device,
-            configuration: configuration
+            device: device
         )
         latestBackupRequests[udid] = request
 
@@ -370,10 +459,6 @@ final class BackupViewModel: ObservableObject {
         backupActivities[udid]?.isActive == true
     }
 
-    func dismissActivity(for udid: String) {
-        backupActivities.removeValue(forKey: udid)
-    }
-
     func cancelBackup(udid: String) {
         switch jobQueue.cancel(udid: udid) {
         case .removedQueued:
@@ -396,39 +481,13 @@ final class BackupViewModel: ObservableObject {
                 // that handoff instead of letting the promoted job start anyway.
                 backupJobTasks[udid]?.cancel()
             }
-            updateActivity(udid: udid) {
-                $0.state = .cancelling
-                $0.isAwaitingPasscode = false
-                $0.progressText = "Pausing (Saving progress)..."
-            }
-            // Self-healing watchdog: pymobiledevice3 checkpoints within 0.5s of SIGTERM.
-            // If the process drain or exitSource takes longer than 1.5s, force activity
-            // transition to .cancelled so the UI doesn't remain in a perpetual "Pausing..." spinner.
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
-                guard let self else { return }
-                if let act = self.backupActivities[udid], act.state == .cancelling {
-                    self.updateActivity(udid: udid) {
-                        $0.state = .cancelled
-                        $0.progressText = "Stopped (Progress Saved)"
-                    }
-                    self.refreshLegacyProgressState()
-                }
-            }
+            updateActivity(udid: udid) { $0.progressText = "Cancelling..." }
         case .notFound:
             break
         }
     }
 
     func resumeBackup(udid: String, preferNetwork: Bool = false, encrypted: Bool = false, device: DeviceInfo? = nil) async {
-        // If a stale .cancelled activity exists the job slot may still be held
-        // in jobQueue (finishBackupJob not yet called from runBackupJob because
-        // the drain task is still in-flight). Force-eject it so enqueue returns
-        // .started instead of .duplicate — which would silently discard the resume.
-        if backupActivities[udid]?.state == .cancelled {
-            jobQueue.finish(udid: udid)
-            backupActivities.removeValue(forKey: udid)
-        }
         await createBackup(
             udid: udid,
             incremental: false,
@@ -510,8 +569,7 @@ final class BackupViewModel: ObservableObject {
             success = await manager.resumeIncompleteBackup(
                 udid: udid,
                 encrypted: request.encrypted,
-                preferNetwork: request.preferNetwork,
-                configuration: request.configuration
+                preferNetwork: request.preferNetwork
             ) { [weak self, weak manager] text in
                 guard let manager else { return }
                 self?.updateBackupProgress(udid: udid, text: text, manager: manager)
@@ -522,12 +580,7 @@ final class BackupViewModel: ObservableObject {
                 self?.updateBackupProgress(udid: udid, text: text, manager: manager)
             }
         } else {
-            success = await manager.createBackup(
-                udid: udid,
-                encrypted: request.encrypted,
-                preferNetwork: request.preferNetwork,
-                configuration: request.configuration
-            ) { [weak self, weak manager] text in
+            success = await manager.createBackup(udid: udid, encrypted: request.encrypted, preferNetwork: request.preferNetwork) { [weak self, weak manager] text in
                 guard let manager else { return }
                 self?.updateBackupProgress(udid: udid, text: text, manager: manager)
             }
@@ -584,7 +637,6 @@ final class BackupViewModel: ObservableObject {
 
     private func updateActivity(udid: String, update: (inout BackupActivity) -> Void) {
         guard var activity = backupActivities[udid] else { return }
-        guard case .cancelling = activity.state else { return }
         update(&activity)
         backupActivities[udid] = activity
     }
@@ -769,28 +821,6 @@ final class BackupViewModel: ObservableObject {
             backupIssue = BackupManager.BackupFailure(
                 title: "Could Not Move Incomplete Backup",
                 message: "Phosphor could not move the incomplete backup folder to Trash. Choose another backup folder or move it manually, then try a full backup again.",
-                technicalDetails: error.localizedDescription,
-                recoveryAction: .openBackupSettings,
-                udid: udid,
-                recoveryPath: path
-            )
-        }
-    }
-
-    func deleteIncompleteBackupOnly(for issue: BackupManager.BackupFailure) async {
-        guard let udid = recoveryUdid(for: issue), let path = issue.recoveryPath else {
-            backupIssue = nil
-            return
-        }
-        do {
-            let recoveryRoot = (path as NSString).deletingLastPathComponent
-            try BackupManager.deleteIncompleteBackup(for: udid, expectedPath: path, in: recoveryRoot)
-            backupIssue = nil
-            loadBackups()
-        } catch {
-            backupIssue = BackupManager.BackupFailure(
-                title: "Could Not Move Incomplete Backup",
-                message: "Phosphor could not move the incomplete backup folder to Trash: \(error.localizedDescription)",
                 technicalDetails: error.localizedDescription,
                 recoveryAction: .openBackupSettings,
                 udid: udid,
