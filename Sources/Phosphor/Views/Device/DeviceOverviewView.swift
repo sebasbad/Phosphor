@@ -517,6 +517,7 @@ struct DeviceOverviewView: View {
 
     private func startBackup(for device: DeviceInfo) {
         if hasResumableBackup(for: device) {
+            onBackupStarted?()
             Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi, device: device) }
             return
         }
