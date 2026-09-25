@@ -68,6 +68,12 @@ final class BackupManager: ObservableObject {
     private var cancelledOperationIDs: Set<UUID> = []
     private var cancellationDrainTasks: [UUID: Task<Void, Never>] = [:]
     private var applicationTerminationWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Continuation parked inside createBackupViaPymobiledevice (or the
+    /// idevicebackup2 fallback). Stored here so cancelBackup() can resume it
+    /// directly once the process is gone — without depending on the
+    /// DispatchSource exit notification firing, which is unreliable after SIGKILL
+    /// when the process was launched via posix_spawn with POSIX_SPAWN_SETSID.
+    private var pendingBackupContinuation: CheckedContinuation<Bool, Never>?
 
     private func beginCancellableOperation(udid: String) -> UUID? {
         // Reset before either rejection branch, not between them. With these
@@ -1017,6 +1023,7 @@ final class BackupManager: ObservableObject {
         directory: String,
         full: Bool,
         preferNetwork: Bool,
+        configuration: DeviceBackupConfiguration? = nil,
         operationID: UUID,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
@@ -1032,16 +1039,31 @@ final class BackupManager: ObservableObject {
         onProgress("Backing up")
         pymobiledeviceStderrTail.removeAll()
 
+        let onlyRegex = configuration?.profileType.preservationRegex(
+            customDomains: configuration?.customIncludedDomains ?? [],
+            excludedBundleIds: configuration?.excludedBundleIds ?? [],
+            excludeMediaFiles: configuration?.excludeMediaAbove50MB ?? false,
+            excludeAppCaches: configuration?.excludeAppCaches ?? false,
+            excludedFilePatterns: configuration?.excludedFilePatterns ?? [],
+            excludedRelativePaths: configuration?.excludedRelativePaths ?? []
+        )
+        let patchManifest = (onlyRegex != nil && !onlyRegex!.isEmpty)
+
         return await withCheckedContinuation { continuation in
             guard !operationWasCancelled(operationID) else {
                 continuation.resume(returning: false)
                 return
             }
+            // Park the continuation so cancelBackup() can resume it directly
+            // if the Shell exitSource notification never fires after SIGKILL.
+            pendingBackupContinuation = continuation
             activeProcess = PyMobileDevice.backup(
                 directory: directory,
                 udid: udid,
                 full: full,
                 preferNetwork: preferNetwork,
+                onlyRegex: onlyRegex,
+                patchManifest: patchManifest,
                 timeout: Self.streamingBackupTimeout,
                 onOutput: { [weak self] output in
                     let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1065,13 +1087,19 @@ final class BackupManager: ObservableObject {
                     }
                     // Retain non-progress stderr lines so a failure surfaces the real reason.
                     guard let self else { return }
+                    // Do not emit passcode / progress lines that arrive in the pipe-drain
+                    // window after the user cancelled. The process is already SIGTERM'd;
+                    // late stderr is just flush noise and must not re-show the banner.
+                    let alreadyCancelled = self.operationWasCancelled(operationID)
                     for line in trimmed.components(separatedBy: "\n") {
                         let l = line.trimmingCharacters(in: .whitespacesAndNewlines)
                         if l.isEmpty { continue }
-                        let lower = l.lowercased()
-                        if lower.contains("passcode") || lower.contains("pin") || lower.contains("trust") || lower.contains("unlock") || lower.contains("pair") {
-                            self.backupProgress = l
-                            onProgress(l)
+                        if !alreadyCancelled {
+                            let lower = l.lowercased()
+                            if lower.contains("passcode") || lower.contains("pin") || lower.contains("trust") || lower.contains("unlock") || lower.contains("pair") {
+                                self.backupProgress = l
+                                onProgress(l)
+                            }
                         }
                         self.pymobiledeviceStderrTail.append(l)
                         if self.pymobiledeviceStderrTail.count > Self.stderrTailLineLimit {
@@ -1090,6 +1118,11 @@ final class BackupManager: ObservableObject {
                         if self.operationCoordinator.activeOperationID == operationID {
                             self.activeProcess = nil
                         }
+                        // Clear the parked continuation — we are about to resume it.
+                        // If cancelBackup() already resumed it, pendingBackupContinuation
+                        // will be nil and we must not double-resume.
+                        guard self.pendingBackupContinuation != nil else { return }
+                        self.pendingBackupContinuation = nil
                         if self.operationWasCancelled(operationID) {
                             await self.awaitCancellationDrain(operationID)
                             continuation.resume(returning: false)
@@ -1106,6 +1139,7 @@ final class BackupManager: ObservableObject {
     func createIncrementalBackup(
         udid: String,
         preferNetwork: Bool = false,
+        configuration: DeviceBackupConfiguration? = nil,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
         // Per-device ownership first (#60): if another owner already holds this
@@ -1191,6 +1225,7 @@ final class BackupManager: ObservableObject {
                 directory: backupRoot,
                 full: false,
                 preferNetwork: preferNetwork,
+                configuration: configuration,
                 operationID: operationID,
                 onProgress: onProgress
             )
@@ -1242,6 +1277,7 @@ final class BackupManager: ObservableObject {
                 continuation.resume(returning: false)
                 return
             }
+            pendingBackupContinuation = continuation
             activeProcess = Shell.runStreaming(
                 "idevicebackup2",
                 arguments: idevicebackupArguments(udid: udid, directory: backupRoot, full: false, preferNetwork: preferNetwork),
@@ -1263,6 +1299,8 @@ final class BackupManager: ObservableObject {
                             continuation.resume(returning: false)
                             return
                         }
+                        guard self.pendingBackupContinuation != nil else { return }
+                        self.pendingBackupContinuation = nil
                         if self.operationWasCancelled(operationID) {
                             await self.awaitCancellationDrain(operationID)
                             self.markOperationCancelled(operationID)
@@ -1400,6 +1438,8 @@ final class BackupManager: ObservableObject {
                             continuation.resume(returning: false)
                             return
                         }
+                        guard self.pendingBackupContinuation != nil else { return }
+                        self.pendingBackupContinuation = nil
                         if self.operationWasCancelled(operationID) {
                             await self.awaitCancellationDrain(operationID)
                             self.markOperationCancelled(operationID)
@@ -1496,12 +1536,13 @@ final class BackupManager: ObservableObject {
         }
 
         // Fallback: idevicebackup2
-        return await withCheckedContinuation { continuation in
+return await withCheckedContinuation { continuation in
             guard !operationWasCancelled(operationID) else {
-                markOperationCancelled(operationID, progress: "Restore cancelled")
+                markOperationCancelled(operationID)
                 continuation.resume(returning: false)
                 return
             }
+            pendingBackupContinuation = continuation
             activeProcess = Shell.runStreaming(
                 "idevicebackup2",
                 // Global options first, then the subcommand, then its options. The
@@ -1537,10 +1578,27 @@ final class BackupManager: ObservableObject {
             cancelledOperationIDs.insert(activeOperationID)
             if let activeProcess, cancellationDrainTasks[activeOperationID] == nil {
                 // Keep the per-device operation lease until every descendant is
-                // gone. The streaming leader can exit before a TERM-ignoring
-                // child, so its completion alone is not cancellation completion.
+                // gone. Use the shorter cancellation grace (1 s) — the user
+                // pressed "Pause & Save" and expects near-instant feedback.
+                // pymobiledevice3 / idevicebackup2 save their in-flight snapshot
+                // on SIGTERM; we give them 1 s before escalating to SIGKILL.
+                //
+                // After the process is confirmed dead, resume pendingBackupContinuation
+                // directly — the Shell exitSource notification is unreliable after
+                // SIGKILL on posix_spawn'd SETSID processes and may never fire.
+                let captured = pendingBackupContinuation
+                pendingBackupContinuation = nil
                 cancellationDrainTasks[activeOperationID] = Task {
-                    await Shell.terminateAndWait(activeProcess)
+                    await Shell.cancelAndWait(activeProcess)
+                    if let cont = captured {
+                        await MainActor.run { [weak self] in
+                            // Nil pendingBackupContinuation first so the process
+                            // completion handler's guard sees nil and does not
+                            // attempt a second resume on the same continuation.
+                            self?.pendingBackupContinuation = nil
+                            cont.resume(returning: false)
+                        }
+                    }
                 }
             }
         }

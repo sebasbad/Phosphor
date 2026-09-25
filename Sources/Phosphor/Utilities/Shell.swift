@@ -730,6 +730,30 @@ enum Shell {
         }
     }
 
+    /// Fast variant for user-initiated cancellation ("Pause & Save").
+    /// Strategy: SIGTERM the group → 0.5 s grace → SIGKILL the group →
+    /// blocking reap of the session leader. This bypasses the
+    /// `processGroupExists` poll which stays true while Python's
+    /// `multiprocessing.resource_tracker` child lingers as a zombie
+    /// (the OS won't return ESRCH until every zombie in the group is reaped
+    /// and we only reap the root). We only need the leader gone to release
+    /// the operation lease; remaining children are adopted by launchd.
+    static func cancelAndWait(_ process: ManagedProcess) async {
+        let pid = process.processIdentifier
+        guard pid > 0 else { return }
+        let processTree = process.processTree
+
+        // 1. Cooperative shutdown: give the tool a chance to checkpoint.
+        terminateProcessTree(processTree, signal: SIGTERM)
+        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 s
+
+        // 2. Force-kill the whole process group unconditionally.
+        terminateProcessTree(processTree, signal: SIGKILL)
+
+        // 3. Reap the session leader. Bounded so a zombie never blocks forever.
+        _ = reapWithinDeadline(pid, timeout: 1.0)
+    }
+
     /// Check if a command-line tool is available.
     static func which(_ tool: String) -> String? {
         let result = run("which", arguments: [tool])

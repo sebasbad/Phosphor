@@ -792,6 +792,8 @@ enum PyMobileDevice {
         udid: String? = nil,
         full: Bool = true,
         preferNetwork: Bool = false,
+        onlyRegex: [String]? = nil,
+        patchManifest: Bool = false,
         timeout: TimeInterval? = 6 * 60 * 60,
         onOutput: @escaping (String) -> Void,
         onError: @escaping (String) -> Void = { _ in },
@@ -799,6 +801,12 @@ enum PyMobileDevice {
     ) -> Shell.ManagedProcess? {
         var args = ["backup2", "backup"]
         if full { args.append("--full") }
+        if patchManifest { args.append("--patch-manifest") }
+        if let onlyRegex {
+            for regex in onlyRegex where !regex.isEmpty {
+                args += ["--only-regex", regex]
+            }
+        }
         // `--mobdev2` can prompt when the same wireless device is advertised on
         // multiple addresses, which crashes in Phosphor's non-interactive
         // Process runner. For Wi-Fi backups, let the libimobiledevice fallback
