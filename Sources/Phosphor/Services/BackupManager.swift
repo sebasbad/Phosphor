@@ -68,6 +68,12 @@ final class BackupManager: ObservableObject {
     private var cancelledOperationIDs: Set<UUID> = []
     private var cancellationDrainTasks: [UUID: Task<Void, Never>] = [:]
     private var applicationTerminationWaiters: [CheckedContinuation<Void, Never>] = []
+    /// Continuation parked inside createBackupViaPymobiledevice (or the
+    /// idevicebackup2 fallback). Stored here so cancelBackup() can resume it
+    /// directly once the process is gone — without depending on the
+    /// DispatchSource exit notification firing, which is unreliable after SIGKILL
+    /// when the process was launched via posix_spawn with POSIX_SPAWN_SETSID.
+    private var pendingBackupContinuation: CheckedContinuation<Bool, Never>?
 
     private func beginCancellableOperation(udid: String) -> UUID? {
         // Reset before either rejection branch, not between them. With these
@@ -103,9 +109,14 @@ final class BackupManager: ObservableObject {
     }
 
     private func awaitCancellationDrain(_ id: UUID) async {
-        guard let drain = cancellationDrainTasks[id] else { return }
+        guard let drain = cancellationDrainTasks[id] else {
+            NSLog("[Phosphor:PauseTrace] awaitCancellationDrain for %@: no drain task active", id.uuidString)
+            return
+        }
+        NSLog("[Phosphor:PauseTrace] awaitCancellationDrain for %@: waiting on drain task", id.uuidString)
         await drain.value
         cancellationDrainTasks.removeValue(forKey: id)
+        NSLog("[Phosphor:PauseTrace] awaitCancellationDrain for %@: drain task completed", id.uuidString)
     }
 
     private func finishOperation(_ id: UUID) {
@@ -144,6 +155,9 @@ final class BackupManager: ObservableObject {
     /// Translate a pymobiledevice3 or idevicebackup2 stderr blob into a short actionable hint.
     private static func diagnostic(for stderr: String) -> (hint: String?, action: RecoveryAction?) {
         let lower = stderr.lowercased()
+        if lower.contains("device locked") || lower.contains("mberrordomain/208") {
+            return ("Your iPhone is locked. Unlock the device with your passcode, keep the screen awake, and try again.", .retry)
+        }
         if lower.contains("not paired") || lower.contains("pairingdialogresponsepending") || lower.contains("trust this computer") {
             return ("Device is not trusted. Unlock it and tap 'Trust' when prompted, then try again.", .retry)
         }
@@ -914,6 +928,8 @@ final class BackupManager: ObservableObject {
             || lowerStderr.contains("remotexpc")
             || lowerStderr.contains("invalidservice")
             || lowerStderr.contains("passcodesetuprequired")
+            || lowerStderr.contains("device locked")
+            || lowerStderr.contains("mberrordomain/208")
 
         if shouldInhibitFallback {
             finishOperation(operationID)
@@ -948,6 +964,7 @@ final class BackupManager: ObservableObject {
                 continuation.resume(returning: false)
                 return
             }
+            pendingBackupContinuation = continuation
             activeProcess = Shell.runStreaming(
                 "idevicebackup2",
                 arguments: args,
@@ -969,6 +986,8 @@ final class BackupManager: ObservableObject {
                             continuation.resume(returning: false)
                             return
                         }
+                        guard self.pendingBackupContinuation != nil else { return }
+                        self.pendingBackupContinuation = nil
                         if self.operationWasCancelled(operationID) {
                             await self.awaitCancellationDrain(operationID)
                             self.markOperationCancelled(operationID)
@@ -1051,6 +1070,9 @@ final class BackupManager: ObservableObject {
                 continuation.resume(returning: false)
                 return
             }
+            // Park the continuation so cancelBackup() can resume it directly
+            // if the Shell exitSource notification never fires after SIGKILL.
+            pendingBackupContinuation = continuation
             activeProcess = PyMobileDevice.backup(
                 directory: directory,
                 udid: udid,
@@ -1081,13 +1103,19 @@ final class BackupManager: ObservableObject {
                     }
                     // Retain non-progress stderr lines so a failure surfaces the real reason.
                     guard let self else { return }
+                    // Do not emit passcode / progress lines that arrive in the pipe-drain
+                    // window after the user cancelled. The process is already SIGTERM'd;
+                    // late stderr is just flush noise and must not re-show the banner.
+                    let alreadyCancelled = self.operationWasCancelled(operationID)
                     for line in trimmed.components(separatedBy: "\n") {
                         let l = line.trimmingCharacters(in: .whitespacesAndNewlines)
                         if l.isEmpty { continue }
-                        let lower = l.lowercased()
-                        if lower.contains("passcode") || lower.contains("pin") || lower.contains("trust") || lower.contains("unlock") || lower.contains("pair") {
-                            self.backupProgress = l
-                            onProgress(l)
+                        if !alreadyCancelled {
+                            let lower = l.lowercased()
+                            if lower.contains("passcode") || lower.contains("pin") || lower.contains("trust") || lower.contains("unlock") || lower.contains("pair") {
+                                self.backupProgress = l
+                                onProgress(l)
+                            }
                         }
                         self.pymobiledeviceStderrTail.append(l)
                         if self.pymobiledeviceStderrTail.count > Self.stderrTailLineLimit {
@@ -1106,6 +1134,11 @@ final class BackupManager: ObservableObject {
                         if self.operationCoordinator.activeOperationID == operationID {
                             self.activeProcess = nil
                         }
+                        // Clear the parked continuation — we are about to resume it.
+                        // If cancelBackup() already resumed it, pendingBackupContinuation
+                        // will be nil and we must not double-resume.
+                        guard self.pendingBackupContinuation != nil else { return }
+                        self.pendingBackupContinuation = nil
                         if self.operationWasCancelled(operationID) {
                             await self.awaitCancellationDrain(operationID)
                             continuation.resume(returning: false)
@@ -1122,6 +1155,7 @@ final class BackupManager: ObservableObject {
     func createIncrementalBackup(
         udid: String,
         preferNetwork: Bool = false,
+        configuration: DeviceBackupConfiguration? = nil,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
         // Per-device ownership first (#60): if another owner already holds this
@@ -1207,6 +1241,7 @@ final class BackupManager: ObservableObject {
                 directory: backupRoot,
                 full: false,
                 preferNetwork: preferNetwork,
+                configuration: configuration,
                 operationID: operationID,
                 onProgress: onProgress
             )
@@ -1228,6 +1263,8 @@ final class BackupManager: ObservableObject {
             || lowerStderr.contains("remotexpc")
             || lowerStderr.contains("invalidservice")
             || lowerStderr.contains("passcodesetuprequired")
+            || lowerStderr.contains("device locked")
+            || lowerStderr.contains("mberrordomain/208")
 
         if shouldInhibitFallback {
             finishOperation(operationID)
@@ -1258,6 +1295,7 @@ final class BackupManager: ObservableObject {
                 continuation.resume(returning: false)
                 return
             }
+            pendingBackupContinuation = continuation
             activeProcess = Shell.runStreaming(
                 "idevicebackup2",
                 arguments: idevicebackupArguments(udid: udid, directory: backupRoot, full: false, preferNetwork: preferNetwork),
@@ -1279,6 +1317,8 @@ final class BackupManager: ObservableObject {
                             continuation.resume(returning: false)
                             return
                         }
+                        guard self.pendingBackupContinuation != nil else { return }
+                        self.pendingBackupContinuation = nil
                         if self.operationWasCancelled(operationID) {
                             await self.awaitCancellationDrain(operationID)
                             self.markOperationCancelled(operationID)
@@ -1386,6 +1426,42 @@ final class BackupManager: ObservableObject {
         }
 
         let pymobiledeviceStderr = pymobiledeviceStderrTail.joined(separator: "\n")
+        let lowerStderr = pymobiledeviceStderr.lowercased()
+
+        if operationWasCancelled(operationID) {
+            await awaitCancellationDrain(operationID)
+            markOperationCancelled(operationID)
+            return false
+        }
+
+        // If pymobiledevice3 timed out, was cancelled, or failed due to passcode/pairing or RemoteXPC,
+        // do not fall back into idevicebackup2 which cannot succeed and risks locking USB/lockdownd.
+        let shouldInhibitFallback = lowerStderr.contains("timed out")
+            || lowerStderr.contains("remotexpc")
+            || lowerStderr.contains("invalidservice")
+            || lowerStderr.contains("passcodesetuprequired")
+            || lowerStderr.contains("device locked")
+            || lowerStderr.contains("mberrordomain/208")
+
+        if shouldInhibitFallback {
+            finishOperation(operationID)
+            backupProgress = "Backup failed"
+            let primaryMessage = lowerStderr.contains("timed out")
+                ? "Resume backup timed out."
+                : "Resume backup failed via pymobiledevice3."
+            let failure = Self.backupFailure(
+                primary: primaryMessage,
+                stderr: pymobiledeviceStderr,
+                udid: udid,
+                recoveryPath: Self.backupPath(for: udid, in: backupRoot)
+            )
+            self.lastBackupFailure = failure
+            self.lastError = Self.composeFailureMessage(
+                primary: primaryMessage,
+                stderr: pymobiledeviceStderr
+            )
+            return false
+        }
 
         // Fallback: idevicebackup2 without --full flag
         let args = idevicebackupArguments(udid: udid, directory: backupRoot, full: false, preferNetwork: preferNetwork)
@@ -1397,6 +1473,7 @@ final class BackupManager: ObservableObject {
                 continuation.resume(returning: false)
                 return
             }
+            pendingBackupContinuation = continuation
             activeProcess = Shell.runStreaming(
                 "idevicebackup2",
                 arguments: args,
@@ -1418,6 +1495,8 @@ final class BackupManager: ObservableObject {
                             continuation.resume(returning: false)
                             return
                         }
+                        guard self.pendingBackupContinuation != nil else { return }
+                        self.pendingBackupContinuation = nil
                         if self.operationWasCancelled(operationID) {
                             await self.awaitCancellationDrain(operationID)
                             self.markOperationCancelled(operationID)
@@ -1551,15 +1630,45 @@ final class BackupManager: ObservableObject {
 
     /// Cancel an active backup/restore.
     func cancelBackup() {
+        NSLog("[Phosphor:PauseTrace] BackupManager.cancelBackup called")
         if let activeOperationID = operationCoordinator.activeOperationID {
+            NSLog("[Phosphor:PauseTrace] activeOperationID found: %@", activeOperationID.uuidString)
             cancelledOperationIDs.insert(activeOperationID)
+            let captured = pendingBackupContinuation
+            pendingBackupContinuation = nil
             if let activeProcess, cancellationDrainTasks[activeOperationID] == nil {
                 // Keep the per-device operation lease until every descendant is
-                // gone. The streaming leader can exit before a TERM-ignoring
-                // child, so its completion alone is not cancellation completion.
+                // gone. Use the shorter cancellation grace (1 s) — the user
+                // pressed "Pause & Save" and expects near-instant feedback.
+                // pymobiledevice3 / idevicebackup2 save their in-flight snapshot
+                // on SIGTERM; we give them 1 s before escalating to SIGKILL.
+                //
+                // After the process is confirmed dead, resume pendingBackupContinuation
+                // directly — the Shell exitSource notification is unreliable after
+                // SIGKILL on posix_spawn'd SETSID processes and may never fire.
+                NSLog("[Phosphor:PauseTrace] Spawning cancellationDrainTask for pid %d", activeProcess.processIdentifier)
                 cancellationDrainTasks[activeOperationID] = Task {
-                    await Shell.terminateAndWait(activeProcess)
+                    await Shell.cancelAndWait(activeProcess)
+                    if let cont = captured {
+                        NSLog("[Phosphor:PauseTrace] Resuming captured continuation from drain task")
+                        await MainActor.run { cont.resume(returning: false) }
+                    }
                 }
+            } else if let captured {
+                // No active process (already exited, or never started) but a
+                // continuation is still parked — resume it so the awaiting
+                // async call returns and runBackupJob can transition to
+                // .cancelled instead of hanging on "Pausing..." forever.
+                NSLog("[Phosphor:PauseTrace] No active process; resuming parked continuation immediately")
+                Task { @MainActor in
+                    captured.resume(returning: false)
+                }
+            }
+        } else if let captured = pendingBackupContinuation {
+            NSLog("[Phosphor:PauseTrace] No active operation ID; resuming parked continuation")
+            pendingBackupContinuation = nil
+            Task { @MainActor in
+                captured.resume(returning: false)
             }
         }
         lastOperationWasCancelled = true

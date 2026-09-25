@@ -1020,34 +1020,6 @@ struct BackupListView: View {
                             .buttonStyle(.borderedProminent)
                             .tint(.orange)
                             .controlSize(.small)
-
-                            Menu {
-                                Button("Show in Finder") {
-                                    if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: activity.udid) {
-                                        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path)
-                                    }
-                                }
-
-                                Divider()
-
-                                Button("Delete Backup", role: .destructive) {
-                                    if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: activity.udid) {
-                                        pendingDeleteIncompleteIssue = BackupManager.BackupFailure(
-                                            title: "Delete Partial Backup",
-                                            message: "Move the partial backup data to Trash.",
-                                            technicalDetails: path,
-                                            recoveryAction: nil,
-                                            udid: activity.udid,
-                                            recoveryPath: path
-                                        )
-                                        showDeleteIncompleteConfirm = true
-                                    }
-                                }
-                            } label: {
-                                Image(systemName: "ellipsis.circle")
-                            }
-                            .menuStyle(.borderlessButton)
-                            .frame(width: 24)
                         } else if isCancelling {
                             HStack(spacing: 6) {
                                 ProgressView()
