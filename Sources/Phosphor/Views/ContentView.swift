@@ -61,8 +61,7 @@ struct ContentView: View {
                             await backupVM.createBackup(
                                 udid: device.id,
                                 incremental: preflightIncremental,
-                                preferNetwork: preflightPreferNetwork,
-                                configuration: preflightConfig
+                                preferNetwork: preflightPreferNetwork
                             )
                         }
                     }
@@ -189,7 +188,7 @@ struct ContentView: View {
     private var detailView: some View {
         switch selectedSection {
         case .devices:
-            DeviceOverviewView(selectedSection: $selectedSection)
+            DeviceOverviewView()
         case .readiness:
             ReadinessCenterView()
         case .backups:
