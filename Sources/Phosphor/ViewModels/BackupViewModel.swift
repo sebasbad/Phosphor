@@ -392,6 +392,7 @@ final class BackupViewModel: ObservableObject {
             }
             updateActivity(udid: udid) {
                 $0.isCancelling = true
+                $0.isAwaitingPasscode = false
                 $0.progressText = "Cancelling..."
             }
         case .notFound:
@@ -400,6 +401,14 @@ final class BackupViewModel: ObservableObject {
     }
 
     func resumeBackup(udid: String, preferNetwork: Bool = false, encrypted: Bool = false, device: DeviceInfo? = nil) async {
+        // If a stale .cancelled activity exists the job slot may still be held
+        // in jobQueue (finishBackupJob not yet called from runBackupJob because
+        // the drain task is still in-flight). Force-eject it so enqueue returns
+        // .started instead of .duplicate — which would silently discard the resume.
+        if backupActivities[udid]?.state == .cancelled {
+            jobQueue.finish(udid: udid)
+            backupActivities.removeValue(forKey: udid)
+        }
         await createBackup(
             udid: udid,
             incremental: false,
@@ -500,6 +509,7 @@ final class BackupViewModel: ObservableObject {
 
         if success {
             updateActivity(udid: udid) {
+                $0.isCancelling = false
                 $0.state = .completed
                 $0.progressText = "Completed"
                 $0.progressFraction = 1
@@ -507,12 +517,14 @@ final class BackupViewModel: ObservableObject {
             loadBackups()
         } else if manager.lastOperationWasCancelled {
             updateActivity(udid: udid) {
+                $0.isCancelling = false
                 $0.state = .cancelled
                 $0.progressText = "Stopped (Progress Saved)"
             }
         } else {
             let error = manager.lastBackupFailure?.message ?? manager.lastError ?? "Backup failed"
             updateActivity(udid: udid) {
+                $0.isCancelling = false
                 $0.state = .failed
                 $0.progressText = "Failed"
                 $0.errorMessage = error
@@ -549,6 +561,7 @@ final class BackupViewModel: ObservableObject {
 
     private func updateActivity(udid: String, update: (inout BackupActivity) -> Void) {
         guard var activity = backupActivities[udid] else { return }
+        guard !activity.isCancelling else { return }
         update(&activity)
         backupActivities[udid] = activity
     }
