@@ -523,11 +523,11 @@ struct DeviceOverviewView: View {
 
         // Always present preflight sheet to give user explicit review and choice
         backupConfig = DeviceBackupConfiguration()
-        onBackupStarted?()
         showPreflightSheet = true
     }
 
     private func executeBackup(for device: DeviceInfo) {
+        onBackupStarted?()
         let preferNetwork = device.connectionType == .wifi
         let incremental = preferNetwork && hasCompleteBackup(for: device)
         if preferNetwork && !incremental {
