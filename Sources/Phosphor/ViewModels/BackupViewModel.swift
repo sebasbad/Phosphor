@@ -9,6 +9,7 @@ final class BackupViewModel: ObservableObject {
         enum State: Equatable {
             case queued(position: Int)
             case running
+            case cancelling
             case completed
             case failed
             case cancelled
@@ -23,7 +24,6 @@ final class BackupViewModel: ObservableObject {
         var speed: String?
         var isResume: Bool = false
         var resumeBaselineFraction: Double = 0.0
-        var isCancelling: Bool = false
         var isAwaitingPasscode: Bool = false
         var errorMessage: String?
 
@@ -31,7 +31,7 @@ final class BackupViewModel: ObservableObject {
 
         var isActive: Bool {
             switch state {
-            case .queued, .running: true
+            case .queued, .running, .cancelling: true
             case .completed, .failed, .cancelled: false
             }
         }
@@ -54,7 +54,7 @@ final class BackupViewModel: ObservableObject {
             switch state {
             case .queued(let position): return "Queued · #\(position)"
             case .running:
-                if isCancelling {
+                if case .cancelling = state {
                     return "Pausing (Saving progress)..."
                 }
                 var components: [String] = []
@@ -97,6 +97,8 @@ final class BackupViewModel: ObservableObject {
                     }
                 }
                 return components.joined(separator: " · ")
+            case .cancelling:
+                return "Pausing (Saving progress)..."
             case .completed: return "Completed"
             case .failed: return "Failed"
             case .cancelled:
@@ -395,7 +397,7 @@ final class BackupViewModel: ObservableObject {
                 backupJobTasks[udid]?.cancel()
             }
             updateActivity(udid: udid) {
-                $0.isCancelling = true
+                $0.state = .cancelling
                 $0.isAwaitingPasscode = false
                 $0.progressText = "Pausing (Saving progress)..."
             }
@@ -533,7 +535,6 @@ final class BackupViewModel: ObservableObject {
 
         if success {
             updateActivity(udid: udid) {
-                $0.isCancelling = false
                 $0.state = .completed
                 $0.progressText = "Completed"
                 $0.progressFraction = 1
@@ -541,14 +542,12 @@ final class BackupViewModel: ObservableObject {
             loadBackups()
         } else if manager.lastOperationWasCancelled {
             updateActivity(udid: udid) {
-                $0.isCancelling = false
                 $0.state = .cancelled
                 $0.progressText = "Stopped (Progress Saved)"
             }
         } else {
             let error = manager.lastBackupFailure?.message ?? manager.lastError ?? "Backup failed"
             updateActivity(udid: udid) {
-                $0.isCancelling = false
                 $0.state = .failed
                 $0.progressText = "Failed"
                 $0.errorMessage = error
@@ -585,7 +584,7 @@ final class BackupViewModel: ObservableObject {
 
     private func updateActivity(udid: String, update: (inout BackupActivity) -> Void) {
         guard var activity = backupActivities[udid] else { return }
-        guard !activity.isCancelling else { return }
+        guard case .cancelling = activity.state else { return }
         update(&activity)
         backupActivities[udid] = activity
     }

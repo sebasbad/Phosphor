@@ -941,7 +941,7 @@ struct BackupListView: View {
 
     private var backupActivityList: some View {
         VStack(spacing: 0) {
-            ForEach(visibleBackupActivities) { activity in
+            ForEach(visibleBackupActivities, id: \.id) { activity in
                 let isPaused = activity.state == .cancelled
                 let isCancelling = activity.state == .cancelling
                 let tintColor: Color = (isPaused || isCancelling) ? .orange : .brandAccent
