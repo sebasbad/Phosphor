@@ -397,7 +397,21 @@ final class BackupViewModel: ObservableObject {
             updateActivity(udid: udid) {
                 $0.isCancelling = true
                 $0.isAwaitingPasscode = false
-                $0.progressText = "Cancelling..."
+                $0.progressText = "Pausing (Saving progress)..."
+            }
+            // Self-healing watchdog: pymobiledevice3 checkpoints within 0.5s of SIGTERM.
+            // If the process drain or exitSource takes longer than 1.5s, force activity
+            // transition to .cancelled so the UI doesn't remain in a perpetual "Pausing..." spinner.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                guard let self else { return }
+                if let act = self.backupActivities[udid], act.state == .cancelling {
+                    self.updateActivity(udid: udid) {
+                        $0.state = .cancelled
+                        $0.progressText = "Stopped (Progress Saved)"
+                    }
+                    self.refreshLegacyProgressState()
+                }
             }
         case .notFound:
             break
