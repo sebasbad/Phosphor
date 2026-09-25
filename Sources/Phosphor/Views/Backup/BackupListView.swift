@@ -737,13 +737,6 @@ struct BackupListView: View {
                         }
 
                         if let eta, !eta.isEmpty {
-                            Text("•")
-                                .foregroundStyle(.secondary)
-                            Text("Est. \(eta)")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
 
                     // Progress bar
                     if let fraction {
