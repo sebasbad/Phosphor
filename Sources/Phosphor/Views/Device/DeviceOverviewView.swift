@@ -19,6 +19,7 @@ struct DeviceOverviewView: View {
     @State private var backupConfig = DeviceBackupConfiguration()
 
     @Binding var selectedSection: SidebarSection?
+    var onShowPreflight: ((DeviceInfo, Bool, Bool, DeviceBackupConfiguration) -> Void)? = nil
 
     var body: some View {
         Group {
@@ -40,20 +41,6 @@ struct DeviceOverviewView: View {
                     await updateResumableStatus(for: device.id)
                     battery = await diagnostics.getBatteryDiagnostics(udid: device.id)
                     storage = await diagnostics.getStorageBreakdown(udid: device.id)
-                }
-                .sheet(isPresented: $showPreflightSheet) {
-                    BackupPreflightSheet(
-                        device: device,
-                        incremental: device.connectionType == .wifi && hasCompleteBackup(for: device),
-                        preferNetwork: device.connectionType == .wifi,
-                        configuration: $backupConfig,
-                        onNavigateToBackups: {
-                            selectedSection = .backups
-                        },
-                        onStartBackup: {
-                            executeBackup(for: device)
-                        }
-                    )
                 }
             } else {
                 noDeviceView
@@ -525,9 +512,11 @@ struct DeviceOverviewView: View {
             return
         }
 
-        // Always present preflight sheet to give user explicit review and choice
-        backupConfig = DeviceBackupConfiguration()
-        showPreflightSheet = true
+        // Trigger preflight sheet from parent (ContentView level)
+        let incremental = device.connectionType == .wifi && hasCompleteBackup(for: device)
+        let preferNetwork = device.connectionType == .wifi
+        let config = DeviceBackupConfiguration.load(for: device.id)
+        onShowPreflight?(device, incremental, preferNetwork, config)
     }
 
     private func executeBackup(for device: DeviceInfo) {
