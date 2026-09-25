@@ -18,6 +18,8 @@ struct DeviceOverviewView: View {
     @State private var showPreflightSheet = false
     @State private var backupConfig = DeviceBackupConfiguration()
 
+    var onBackupStarted: (() -> Void)? = nil
+
     var body: some View {
         Group {
             if let device = deviceVM.selectedDevice {
@@ -459,92 +461,7 @@ struct DeviceOverviewView: View {
                     }
                     .disabled(deviceVM.isEnablingWiFiSync)
                     .help("Enable Finder's Show this iPhone when on Wi-Fi option for this trusted USB device")
-                }
-            }
-
-            if let activity = backupVM.activity(for: device.id), activity.isActive || activity.state == .cancelled {
-                VStack(alignment: .leading, spacing: 8) {
-                    if activity.isAwaitingPasscode {
-                        HStack(spacing: 8) {
-                            Image(systemName: "lock.shield.fill")
-                                .foregroundStyle(.orange)
-                                .font(.system(size: 14, weight: .semibold))
-                            Text("Please unlock your device and enter your passcode or tap 'Trust' to proceed...")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.orange)
-                        }
-                        .padding(.vertical, 4)
-                        .padding(.horizontal, 8)
-                        .background(Color.orange.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                    }
-
-                    HStack {
-                        Text(activity.displayProgressText)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(activity.state == .cancelled ? .primary : .secondary)
-                            .lineLimit(1)
-                        Spacer()
-
-                        if activity.state == .cancelled {
-                            Button {
-                                Task {
-                                    await backupVM.resumeBackup(
-                                        udid: device.id,
-                                        preferNetwork: device.connectionType == .wifi,
-                                        device: device
-                                    )
-                                }
-                            } label: {
-                                Label("Resume", systemImage: "play.fill")
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.orange)
-                            .controlSize(.small)
-                        } else if activity.state == .cancelling {
-                            Button {
-                            } label: {
-                                HStack(spacing: 4) {
-                                    ProgressView()
-                                        .controlSize(.mini)
-                                    Text("Pausing...")
-                                }
-                            }
-                            .controlSize(.small)
-                            .disabled(true)
-                            .accessibilityLabel("Pausing backup for \(device.name)")
-                        } else {
-                            Button {
-                                if activity.isNonResumableFinalizationPhase {
-                                    pendingCancelDeviceID = device.id
-                                    showNonResumableCancelConfirm = true
-                                } else {
-                                    backupVM.cancelBackup(udid: device.id)
-                                }
-                            } label: {
-                                Label("Pause & Save", systemImage: "pause.circle")
-                            }
-                            .controlSize(.small)
-                            .help(activity.isNonResumableFinalizationPhase ? "Warning: Finalization is non-resumable. Stopping now will abort this completed backup." : "Stops the backup and saves progress. You can resume later.")
-                        }
-                    }
-                    ProgressView(
-                        value: activity.displayProgressFraction,
-                        total: 1.0
-                    )
-                    .progressViewStyle(.linear)
-                    .tint(activity.state == .cancelled ? .orange : (activity.isAwaitingPasscode ? .orange : .brandAccent))
-
-                    Text(activity.state == .cancelled ? "Progress is saved. You can reconnect or click Resume anytime to continue." : (activity.isFinalizing ? (activity.finalizationMetrics != nil ? "Reorganizing files from snapshot onto disk. Do not disconnect." : "Consolidating files and sealing backup manifest on disk...") : "Progress is saved automatically. You can resume later."))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            if device.connectionType == .usb {
-                Text("Enable Wi-Fi turns on Finder's \"Show this iPhone when on Wi-Fi\" option. After it succeeds, unplug the cable, keep the device unlocked, then scan again.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+}
             }
         }
         .cardStyle()
@@ -606,6 +523,7 @@ struct DeviceOverviewView: View {
 
         // Always present preflight sheet to give user explicit review and choice
         backupConfig = DeviceBackupConfiguration()
+        onBackupStarted?()
         showPreflightSheet = true
     }
 
