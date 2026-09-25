@@ -161,7 +161,7 @@ struct ContentView: View {
     private var detailView: some View {
         switch selectedSection {
         case .devices:
-            DeviceOverviewView(onBackupStarted: { selectedSection = .backups })
+            DeviceOverviewView(selectedSection: $selectedSection)
         case .readiness:
             ReadinessCenterView()
         case .backups:
