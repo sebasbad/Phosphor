@@ -501,16 +501,7 @@ struct DeviceOverviewView: View {
                             .buttonStyle(.borderedProminent)
                             .tint(.orange)
                             .controlSize(.small)
-
-                            Button {
-                                backupVM.dismissActivity(for: device.id)
-                            } label: {
-                                Image(systemName: "xmark.circle")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Dismiss")
-                        } else if activity.state == .running && activity.isCancelling {
+                        } else if activity.state == .cancelling {
                             Button {
                             } label: {
                                 HStack(spacing: 4) {
