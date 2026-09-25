@@ -18,7 +18,7 @@ struct DeviceOverviewView: View {
     @State private var showPreflightSheet = false
     @State private var backupConfig = DeviceBackupConfiguration()
 
-    var onBackupStarted: (() -> Void)? = nil
+    @Binding var selectedSection: SidebarSection?
 
     var body: some View {
         Group {
@@ -47,8 +47,8 @@ struct DeviceOverviewView: View {
                         incremental: device.connectionType == .wifi && hasCompleteBackup(for: device),
                         preferNetwork: device.connectionType == .wifi,
                         configuration: $backupConfig,
-                        onConfirm: {
-                            onBackupStarted?()
+                        onNavigateToBackups: {
+                            selectedSection = .backups
                         },
                         onStartBackup: {
                             executeBackup(for: device)
@@ -520,7 +520,7 @@ struct DeviceOverviewView: View {
 
     private func startBackup(for device: DeviceInfo) {
         if hasResumableBackup(for: device) {
-            onBackupStarted?()
+            selectedSection = .backups
             Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi, device: device) }
             return
         }
@@ -531,7 +531,6 @@ struct DeviceOverviewView: View {
     }
 
     private func executeBackup(for device: DeviceInfo) {
-        onBackupStarted?()
         let preferNetwork = device.connectionType == .wifi
         let incremental = preferNetwork && hasCompleteBackup(for: device)
         if preferNetwork && !incremental {
