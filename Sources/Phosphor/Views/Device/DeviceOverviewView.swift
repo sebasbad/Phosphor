@@ -47,6 +47,9 @@ struct DeviceOverviewView: View {
                         incremental: device.connectionType == .wifi && hasCompleteBackup(for: device),
                         preferNetwork: device.connectionType == .wifi,
                         configuration: $backupConfig,
+                        onConfirm: {
+                            onBackupStarted?()
+                        },
                         onStartBackup: {
                             executeBackup(for: device)
                         }
