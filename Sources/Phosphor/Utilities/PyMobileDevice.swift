@@ -742,12 +742,13 @@ enum PyMobileDevice {
 
     // MARK: - Apps
 
-    /// List installed apps. Returns JSON array.
-    static func appsList(udid: String? = nil) async -> [[String: Any]] {
+    /// List installed apps with optional size calculation (Issue #4).
+    static func appsList(udid: String? = nil, calculateSizes: Bool = false) async -> [[String: Any]] {
         var args = ["apps", "list"]
+        if calculateSizes { args.append("--calculate-sizes") }
         if let udid { args += ["--udid", udid] }
 
-        let result = await runAsync(args, timeout: 60)
+        let result = await runAsync(args, timeout: calculateSizes ? 120 : 60)
         guard result.succeeded else { return [] }
 
         // Try JSON
@@ -786,7 +787,7 @@ enum PyMobileDevice {
 
     // MARK: - Backup
 
-    /// Create a backup.
+    /// Create a backup with optional domain filters and manifest patching (Issues #4 & #5).
     static func backup(
         directory: String,
         udid: String? = nil,
