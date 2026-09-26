@@ -156,11 +156,6 @@ final class BackupViewModel: ObservableObject {
             return Date().timeIntervalSince(lastProgressUpdate) > 300 // 5 minutes without progress
         }
 
-        var isProcessAlive: Bool {
-            guard case .running = state else { return true }
-            return processAlive && (Date().timeIntervalSince(lastProgressUpdate) < 60)
-        }
-
         var displayProgressText: String {
             switch state {
             case .queued(let position): return "Queued · #\(position)"
