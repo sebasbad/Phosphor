@@ -583,6 +583,14 @@ final class BackupManager: ObservableObject {
     }
 
     /// Fast inspect statistics of an interrupted/saved backup folder.
+    /// Trustworthiness of a backup's manifest, or nil when it cannot be opened.
+    nonisolated static func backupIntegrity(for udid: String, in directory: String? = nil) -> BackupManifest.IntegrityReport? {
+        guard let manifest = try? BackupManifest(backupPath: backupPath(for: udid, in: directory)) else {
+            return nil
+        }
+        return manifest.integrityReport()
+    }
+
     nonisolated static func incompleteBackupStats(for udid: String, in directory: String? = nil) -> IncompleteBackupStats? {
         let fm = FileManager.default
         let path = backupPath(for: udid, in: directory)

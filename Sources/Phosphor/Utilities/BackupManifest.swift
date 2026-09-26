@@ -390,6 +390,76 @@ final class BackupManifest {
         try db.rowCount(for: "Files")
     }
 
+    /// How far a backup can be trusted beyond "Manifest.db exists".
+    struct IntegrityReport: Sendable {
+        enum Verdict: String, Sendable {
+            case ok        // intact, sampled rows all have files
+            case degraded  // intact, but some rows point at missing files
+            case corrupt   // SQLite reports corruption
+            case unreadable
+        }
+        let verdict: Verdict
+        let manifestFileCount: Int
+        let checkedBlobs: Int
+        let missingBlobs: Int
+        let detail: String?
+    }
+
+    /// SQLite integrity plus a bounded check that manifest rows have blobs.
+    ///
+    /// The integrity check is the load-bearing part: iOS writes blobs before it
+    /// records them in the manifest, so an interrupted backup is normally a
+    /// *truncated manifest*, which is exactly what `PRAGMA integrity_check`
+    /// catches. The blob cross-check is bounded because a large backup has
+    /// hundreds of thousands of rows and a stat per row is not affordable on
+    /// every discovery pass.
+    func integrityReport(blobSampleLimit: Int = 2_000) -> IntegrityReport {
+        let total = (try? db.rowCount(for: "Files")) ?? 0
+        guard let rows = try? db.query("PRAGMA integrity_check") else {
+            return IntegrityReport(verdict: .unreadable, manifestFileCount: total,
+                                   checkedBlobs: 0, missingBlobs: 0,
+                                   detail: "Manifest.db could not be read")
+        }
+        let messages = rows.compactMap { $0.values.first as? String }
+        guard messages.count == 1, messages[0].lowercased() == "ok" else {
+            return IntegrityReport(verdict: .corrupt, manifestFileCount: total,
+                                   checkedBlobs: 0, missingBlobs: 0,
+                                   detail: messages.first)
+        }
+
+        let limit = max(0, min(blobSampleLimit, total))
+        guard limit > 0,
+              let fileRows = try? db.query(
+                "SELECT fileID FROM Files WHERE flags = 1 LIMIT \(limit)") else {
+            return IntegrityReport(verdict: .ok, manifestFileCount: total,
+                                   checkedBlobs: 0, missingBlobs: 0, detail: nil)
+        }
+
+        var missing = 0
+        for row in fileRows {
+            guard let id = row["fileID"] as? String, Self.isValidFileID(id),
+                  !blobExists(fileID: id) else { continue }
+            missing += 1
+        }
+        return IntegrityReport(
+            verdict: missing == 0 ? .ok : .degraded,
+            manifestFileCount: total,
+            checkedBlobs: fileRows.count,
+            missingBlobs: missing,
+            detail: missing == 0 ? nil : "\(missing) manifest rows have no file on disk"
+        )
+    }
+
+    /// An interrupted backup keeps blobs under `Snapshot/` until finalization
+    /// lifts them up a level, so both layouts count as present.
+    private func blobExists(fileID: String) -> Bool {
+        let relative = "\(fileID.prefix(2))/\(fileID)"
+        let root = backupPath as NSString
+        let fm = FileManager.default
+        return fm.fileExists(atPath: root.appendingPathComponent(relative))
+            || fm.fileExists(atPath: root.appendingPathComponent("Snapshot/\(relative)"))
+    }
+
     /// Ordered, bounded cursor used by backup comparison. It steps one indexed
     /// manifest row at a time, caps metadata BLOB reads, and checks SQLite's
     /// terminal status instead of accepting partial rows as a successful scan.
