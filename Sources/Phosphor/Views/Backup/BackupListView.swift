@@ -649,19 +649,37 @@ struct BackupListView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("\(deviceIdentity(for: activity.udid)), \(activity.displayProgressText)")
                         Spacer()
-                        Button {
-                            if activity.isNonResumableFinalizationPhase {
-                                pendingCancelActivityUDID = activity.udid
-                                showNonResumableCancelConfirm = true
-                            } else {
-                                backupVM.cancelBackup(udid: activity.udid)
+                        if activity.isStalled {
+                            Button("Resume") {
+                                Task { await backupVM.resumeBackup(udid: activity.udid) }
                             }
-                        } label: {
-                            Label("Pause & Save", systemImage: "pause.circle")
+                            .buttonStyle(.borderedProminent)
+                            .tint(.orange)
+                            .controlSize(.small)
+                            .help("No progress for 5+ minutes - resume this backup")
+                        } else if !activity.isProcessAlive {
+                            Button("Restart") {
+                                Task { await backupVM.resumeBackup(udid: activity.udid) }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                            .controlSize(.small)
+                            .help("Backup process stopped reporting - click to restart")
+                        } else {
+                            Button {
+                                if activity.isNonResumableFinalizationPhase {
+                                    pendingCancelActivityUDID = activity.udid
+                                    showNonResumableCancelConfirm = true
+                                } else {
+                                    backupVM.cancelBackup(udid: activity.udid)
+                                }
+                            } label: {
+                                Label("Pause & Save", systemImage: "pause.circle")
+                            }
+                            .controlSize(.small)
+                            .help(activity.isNonResumableFinalizationPhase ? "Warning: Finalization is non-resumable. Stopping now will abort this completed backup." : "Stops the backup and saves progress. You can resume later.")
+                            .accessibilityLabel("Cancel backup for \(deviceIdentity(for: activity.udid))")
                         }
-                        .controlSize(.small)
-                        .help(activity.isNonResumableFinalizationPhase ? "Warning: Finalization is non-resumable. Stopping now will abort this completed backup." : "Stops the backup and saves progress. You can resume later.")
-                        .accessibilityLabel("Cancel backup for \(deviceIdentity(for: activity.udid))")
                     }
                     if case .running = activity.state {
                         if activity.isAwaitingPasscode {
