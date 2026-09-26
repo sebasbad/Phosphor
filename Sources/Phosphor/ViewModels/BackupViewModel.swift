@@ -105,7 +105,13 @@ final class BackupViewModel: ObservableObject {
         var lastSizeUpdate: Date?
         var processAlive: Bool = true
         var lastProgressUpdate: Date = Date()
-
+        
+        // Enhanced observability fields
+        var phaseMetrics: PhaseMetrics?
+        var throughputStats: ThroughputHistory.ThroughputStats?
+        var predictiveETA: ThroughputHistory.PredictiveETA?
+        var throughputTrend: ThroughputHistory.ThroughputTrend = .insufficient
+        
         var finalizationMetrics: FinalizationProgressTracker.Metrics?
 
         var isActive: Bool {
@@ -147,12 +153,12 @@ final class BackupViewModel: ObservableObject {
 
         var isStalled: Bool {
             guard case .running = state else { return false }
-            guard let lastUpdate = lastSizeUpdate else { return false }
-            return Date().timeIntervalSince(lastUpdate) > 300 // 5 minutes
+            return Date().timeIntervalSince(lastProgressUpdate) > 300 // 5 minutes without progress
         }
 
         var isProcessAlive: Bool {
-            processAlive && (Date().timeIntervalSince(lastProgressUpdate) < 60)
+            guard case .running = state else { return true }
+            return processAlive && (Date().timeIntervalSince(lastProgressUpdate) < 60)
         }
 
         var displayProgressText: String {
@@ -160,6 +166,15 @@ final class BackupViewModel: ObservableObject {
             case .queued(let position): return "Queued · #\(position)"
             case .running:
                 var components: [String] = []
+                
+                // Prepend phase info if available
+                if let phaseMetrics = phaseMetrics {
+                    components.append("\(phaseMetrics.phase.displayName)")
+                    if let detail = phaseMetrics.phaseDetail {
+                        components.append(detail.description)
+                    }
+                }
+                
                 if isFinalizing {
                     let pct = Int(displayProgressFraction * 100)
                     if let metrics = finalizationMetrics {
@@ -202,6 +217,14 @@ final class BackupViewModel: ObservableObject {
                     if let eta, !eta.isEmpty {
                         components.append("ETA: \(eta)")
                     }
+                }
+                // Add predictive ETA if available
+                if let predictiveETA = predictiveETA, predictiveETA.confidence != .none {
+                    components.append("Predicted: \(predictiveETA.formattedETA) (\(predictiveETA.confidence.rawValue))")
+                }
+                // Add throughput trend
+                if throughputTrend != .insufficient {
+                    components.append("Trend: \(throughputTrend.description)")
                 }
                 return components.joined(separator: " · ")
             case .completed: return "Completed"
@@ -275,6 +298,7 @@ final class BackupViewModel: ObservableObject {
     private var backupManagers: [String: BackupManager] = [:]
     private var backupJobTasks: [String: Task<Void, Never>] = [:]
     private var finalizationTasks: [String: Task<Void, Never>] = [:]
+    private var livenessTasks: [String: Task<Void, Never>] = [:]
     private var backupCompletionContinuations: [String: CheckedContinuation<Void, Never>] = [:]
     private var backupJobWaiters: [String: [BackupJobWaiter]] = [:]
 
@@ -561,7 +585,9 @@ final class BackupViewModel: ObservableObject {
             $0.isResume = isResume
             $0.resumeBaselineFraction = baselineFraction
             $0.progressText = isResume ? "Resuming..." : "Preparing..."
+            $0.lastProgressUpdate = Date()
         }
+        startLivenessMonitor(udid: udid)
         refreshLegacyProgressState()
 
         let success: Bool
@@ -616,6 +642,7 @@ final class BackupViewModel: ObservableObject {
 
     private func finishBackupJob(udid: String) {
         finalizationTasks.removeValue(forKey: udid)?.cancel()
+        livenessTasks.removeValue(forKey: udid)?.cancel()
         requestTracker.finish(udid: udid)
         pendingBackupRequests.removeValue(forKey: udid)
         backupManagers.removeValue(forKey: udid)
@@ -639,6 +666,23 @@ final class BackupViewModel: ObservableObject {
         guard var activity = backupActivities[udid] else { return }
         update(&activity)
         backupActivities[udid] = activity
+    }
+
+    /// Republishes activity state on a timer so time-derived flags
+    /// (`isStalled`, `isProcessAlive`) flip in the UI even when the
+    /// backup emits no further progress. Without this the row would only
+    /// refresh on the next progress line — i.e. never, when stalled.
+    private func startLivenessMonitor(udid: String) {
+        livenessTasks[udid]?.cancel()
+        livenessTasks[udid] = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                if Task.isCancelled { break }
+                guard let self else { return }
+                self.updateActivity(udid: udid) { $0.processAlive = true }
+                self.refreshLegacyProgressState()
+            }
+        }
     }
 
     private func resumeBackupWaiters(for udid: String) {
@@ -693,6 +737,8 @@ final class BackupViewModel: ObservableObject {
             || lower.contains("pairing")
         updateActivity(udid: udid) { activity in
             activity.progressText = text
+            activity.lastProgressUpdate = Date()
+            activity.processAlive = true
             if awaitingPasscode {
                 activity.isAwaitingPasscode = true
             }
