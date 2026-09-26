@@ -882,25 +882,67 @@ struct BackupRow: View {
                     .progressViewStyle(.linear)
                     .tint(isStalled ? .orange : .brandAccent)
 
+            HStack(spacing: 6) {
+                Text(isStalled ? "Stalled - no progress for 5+ min" : activity.progressText)
+                    .font(.system(size: 10))
+                    .foregroundStyle(isStalled ? Color.orange : .secondary)
+                    .lineLimit(1)
+                if let speed = activity.speed {
+                    Text("- \(speed)")
+                    if let eta = activity.eta { Text("- ETA \(eta)") }
+                }
+            }
+            .font(.system(size: 10))
+
+            if let phase = activity.phaseMetrics?.phase {
+                Label {
+                    Text(phase.displayName)
+                } icon: {
+                    Image(systemName: phase.systemImage)
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            }
+
+            if let stats = activity.throughputStats, stats.samplesCount >= 5 {
                 HStack(spacing: 6) {
-                    Text(isStalled ? "Stalled - no progress for 5+ min" : activity.progressText)
-                        .font(.system(size: 10))
-                        .foregroundStyle(isStalled ? Color.orange : .secondary)
-                        .lineLimit(1)
-                    if let speed = activity.speed {
-                        Text("- \(speed)")
-                        if let eta = activity.eta { Text("- ETA \(eta)") }
+                    Text("avg \(Self.formatRate(stats.averageBytesPerSecond))")
+                    Text("peak \(Self.formatRate(stats.peakBytesPerSecond))")
+                    if activity.throughputTrend != .insufficient {
+                        Text("- \(activity.throughputTrend.description)")
                     }
                 }
                 .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            }
 
-                if let metrics = activity.finalizationMetrics {
-                    Text("Finalizing: \(metrics.filesMoved.formatted()) / ~\(metrics.totalFiles.formatted()) files")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
+            if let predicted = activity.predictiveETA,
+               predicted.confidence != .none,
+               predicted.estimatedSeconds > 0 {
+                Text("Predicted \(Self.formatDuration(predicted.estimatedSeconds)) remaining · \(predicted.confidence.rawValue) confidence")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            if let metrics = activity.finalizationMetrics {
+                Text("Finalizing: \(metrics.filesMoved.formatted()) / ~\(metrics.totalFiles.formatted()) files")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
             }
         }
+    }
+
+    private static func formatRate(_ bytesPerSecond: Double) -> String {
+        guard bytesPerSecond > 0 else { return "-" }
+        return ByteCountFormatter.string(fromByteCount: Int64(bytesPerSecond), countStyle: .file) + "/s"
+    }
+
+    private static func formatDuration(_ interval: TimeInterval) -> String {
+        let total = Int(interval)
+        if total >= 3600 { return "\(total / 3600)h \((total % 3600) / 60)m" }
+        if total >= 60 { return "\(total / 60)m \(total % 60)s" }
+        return "\(total)s"
     }
 
     var body: some View {
