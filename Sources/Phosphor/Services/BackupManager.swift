@@ -956,9 +956,12 @@ final class BackupManager: ObservableObject {
         directory: String,
         full: Bool,
         preferNetwork: Bool,
+        configuration: DeviceBackupConfiguration? = nil,
         operationID: UUID,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
+    // Use configuration as local variable for backward compatibility
+    let configuration = configuration
         // Entering this async helper is an actor suspension point. Quit may request
         // cancellation after ownership is acquired but before a child is assigned.
         guard !operationWasCancelled(operationID) else { return false }
@@ -966,6 +969,19 @@ final class BackupManager: ObservableObject {
             lastError = "pymobiledevice3 not installed. Install with: pipx install pymobiledevice3"
             return false
         }
+
+        // Generate domain preservation regex from configuration
+        let onlyRegex: [String]? = {
+            guard let config = configuration else { return nil }
+            return config.profileType.preservationRegex(
+                customDomains: config.customIncludedDomains,
+                excludedBundleIds: config.excludedBundleIds,
+                excludeMediaFiles: config.excludeMediaAbove50MB,
+                excludeAppCaches: config.excludeAppCaches,
+                excludedFilePatterns: config.excludedFilePatterns,
+                excludedRelativePaths: config.excludedRelativePaths
+            )
+        }()
 
         backupProgress = "Backing up..."
         onProgress("Backing up")
@@ -981,6 +997,8 @@ final class BackupManager: ObservableObject {
                 udid: udid,
                 full: full,
                 preferNetwork: preferNetwork,
+                onlyRegex: onlyRegex,
+                patchManifest: onlyRegex != nil && !onlyRegex!.isEmpty,
                 timeout: Self.streamingBackupTimeout,
                 onOutput: { [weak self] output in
                     let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)

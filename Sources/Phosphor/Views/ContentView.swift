@@ -188,7 +188,13 @@ struct ContentView: View {
     private var detailView: some View {
         switch selectedSection {
         case .devices:
-            DeviceOverviewView()
+            DeviceOverviewView(onShowPreflight: { device in
+                preflightDevice = device
+                preflightIncremental = device.connectionType == .wifi && BackupManager.hasExistingBackup(for: device.id)
+                preflightPreferNetwork = device.connectionType == .wifi
+                preflightConfig = DeviceBackupConfiguration.load(for: device.id)
+                showPreflightSheet = true
+            })
         case .readiness:
             ReadinessCenterView()
         case .backups:

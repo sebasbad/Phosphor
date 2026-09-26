@@ -14,6 +14,7 @@ struct DeviceOverviewView: View {
     @State private var pendingBackupDevice: DeviceInfo?
     @State private var showNonResumableCancelConfirm = false
     @State private var pendingCancelDeviceID: String?
+    var onShowPreflight: ((DeviceInfo) -> Void)? = nil
 
     var body: some View {
         Group {
@@ -516,7 +517,7 @@ struct DeviceOverviewView: View {
 
     private func startBackup(for device: DeviceInfo) {
         if hasResumableBackup(for: device) {
-            Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi, device: device) }
+            onShowPreflight?(device)
             return
         }
         let preferNetwork = device.connectionType == .wifi
