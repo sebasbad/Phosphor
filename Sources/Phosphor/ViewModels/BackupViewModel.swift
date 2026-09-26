@@ -105,13 +105,22 @@ final class BackupViewModel: ObservableObject {
         var lastSizeUpdate: Date?
         var processAlive: Bool = true
         var lastProgressUpdate: Date = Date()
-        
+
+        // Observability integration
+        var observabilityCoordinator: BackupObservabilityCoordinator?
+
+        var observabilityPhase: BackupPhase {
+            if isFinalizing { return .finalization }
+            if isResume { return .incrementalResume }
+            return .fullBackup
+        }
+
         // Enhanced observability fields
         var phaseMetrics: PhaseMetrics?
         var throughputStats: ThroughputHistory.ThroughputStats?
         var predictiveETA: ThroughputHistory.PredictiveETA?
         var throughputTrend: ThroughputHistory.ThroughputTrend = .insufficient
-        
+
         var finalizationMetrics: FinalizationProgressTracker.Metrics?
 
         var isActive: Bool {
@@ -582,6 +591,7 @@ final class BackupViewModel: ObservableObject {
             $0.progressText = isResume ? "Resuming..." : "Preparing..."
             $0.lastProgressUpdate = Date()
         }
+        startObservability(udid: udid, isResume: isResume)
         startLivenessMonitor(udid: udid)
         refreshLegacyProgressState()
 
@@ -680,6 +690,28 @@ final class BackupViewModel: ObservableObject {
         }
     }
 
+    private func startObservability(udid: String, isResume: Bool) {
+        let coordinator = BackupObservabilityCoordinator()
+        coordinator.startObserving(udid: udid, configuration: nil)
+        // Seed initial phase
+        let initialPhase: BackupPhase = isResume ? .incrementalResume : .fullBackup
+        coordinator.updateMetrics(
+            phase: initialPhase,
+            progressFraction: nil,
+            bytesTransferred: nil,
+            filesTransferred: nil,
+            totalBytes: nil,
+            totalFiles: nil,
+            currentFile: nil,
+            speedBytesPerSec: nil,
+            speedFilesPerSec: nil,
+            eta: nil,
+            isFinalizing: false,
+            finalizationMetrics: nil
+        )
+        updateActivity(udid: udid) { $0.observabilityCoordinator = coordinator }
+    }
+
     private func resumeBackupWaiters(for udid: String) {
         let waiters = backupJobWaiters.removeValue(forKey: udid) ?? []
         waiters.forEach { $0.continuation.resume() }
@@ -730,6 +762,8 @@ final class BackupViewModel: ObservableObject {
             || lower.contains("unlock")
             || lower.contains("not paired")
             || lower.contains("pairing")
+        var transferredBytes: Int64?
+        var totalBytes: Int64?
         updateActivity(udid: udid) { activity in
             activity.progressText = text
             activity.lastProgressUpdate = Date()
@@ -751,6 +785,8 @@ final class BackupViewModel: ObservableObject {
                 }
                 if let eta = details.eta { activity.eta = eta }
                 if let speed = details.speed { activity.speed = speed }
+                if let t = details.transferred { transferredBytes = Self.parseByteCount(t) }
+                if let t = details.total { totalBytes = Self.parseByteCount(t) }
             } else if let pct = PyMobileDevice.parseProgress(from: text) {
                 if pct > 0.001 {
                     activity.isAwaitingPasscode = false
@@ -770,8 +806,77 @@ final class BackupViewModel: ObservableObject {
             if activity.isFinalizing {
                 startFinalizationWatchdogIfNeeded(udid: udid)
             }
+
+            if let coordinator = activity.observabilityCoordinator {
+                coordinator.updateMetrics(
+                    phase: activity.observabilityPhase,
+                    progressFraction: activity.progressFraction,
+                    bytesTransferred: transferredBytes,
+                    filesTransferred: nil,
+                    totalBytes: totalBytes,
+                    totalFiles: nil,
+                    currentFile: nil,
+                    speedBytesPerSec: activity.speed.flatMap(Self.parseSpeedToBytesPerSecond),
+                    speedFilesPerSec: nil,
+                    eta: activity.eta.flatMap(Self.parseEtaToSeconds),
+                    isFinalizing: activity.isFinalizing,
+                    finalizationMetrics: activity.finalizationMetrics
+                )
+                activity.phaseMetrics = coordinator.phaseMetrics
+                activity.predictiveETA = coordinator.predictiveETA
+                activity.throughputStats = coordinator.throughputStats
+                activity.throughputTrend = coordinator.throughputTrend
+            }
         }
         refreshLegacyProgressState()
+    }
+
+    /// Parse a tqdm speed string ("39.5MB/s", "1.2GB/s") into bytes/sec.
+    /// "it/s" is iteration rate, not a byte rate, so it returns nil.
+    private static func parseSpeedToBytesPerSecond(_ s: String) -> Double? {
+        let trimmed = s.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.lowercased().contains("it/s") else { return nil }
+        guard let regex = try? NSRegularExpression(pattern: #"^([\d.]+)\s*([kKmMgG]?)[bB]?/?s"#) else { return nil }
+        guard let m = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)) else { return nil }
+        guard let numRange = Range(m.range(at: 1), in: trimmed), let num = Double(String(trimmed[numRange])) else { return nil }
+        let unit = Range(m.range(at: 2), in: trimmed).map { String(trimmed[$0]) } ?? ""
+        let factor: Double = switch unit.lowercased() {
+        case "g": 1_073_741_824
+        case "m": 1_048_576
+        case "k": 1_024
+        default: 1
+        }
+        return num * factor
+    }
+
+    /// Parse a tqdm size string ("12.3G", "123M", "456K", "789") into bytes.
+    private static func parseByteCount(_ s: String) -> Int64? {
+        let trimmed = s.trimmingCharacters(in: .whitespaces).uppercased()
+        guard let regex = try? NSRegularExpression(pattern: #"^([\d.]+)\s*([KMGT]?)B?$"#) else { return nil }
+        guard let m = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)) else { return nil }
+        guard let numRange = Range(m.range(at: 1), in: trimmed),
+              let num = Double(trimmed[numRange]) else { return nil }
+        let unit = Range(m.range(at: 2), in: trimmed).map { String(trimmed[$0]) } ?? ""
+        let factor: Double = switch unit {
+        case "K": 1_024
+        case "M": 1_048_576
+        case "G": 1_073_741_824
+        case "T": 1_099_511_627_776
+        default: 1
+        }
+        return Int64(num * factor)
+    }
+
+    /// Parse a formatted ETA ("5m 30s", "1h 2m 10s") into seconds.
+    private static func parseEtaToSeconds(_ s: String) -> TimeInterval? {
+        var total: TimeInterval = 0
+        for part in s.lowercased().components(separatedBy: " ") {
+            let token = part.trimmingCharacters(in: .whitespaces)
+            if token.hasSuffix("h"), let v = Double(token.dropLast(1)) { total += v * 3600 }
+            else if token.hasSuffix("m"), let v = Double(token.dropLast(1)) { total += v * 60 }
+            else if token.hasSuffix("s"), let v = Double(token.dropLast(1)) { total += v }
+        }
+        return total > 0 ? total : nil
     }
 
     private func startFinalizationWatchdogIfNeeded(udid: String) {
