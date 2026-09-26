@@ -91,6 +91,8 @@ struct BackupListView: View {
                         } onDelete: {
                             backupToDelete = backup
                             showDeleteConfirm = true
+                        } onResume: {
+                            Task { await backupVM.resumeBackup(udid: backup.udid, device: deviceVM.devices.first(where: { $0.id == backup.udid })) }
                         }
                     }
                 }
@@ -827,6 +829,7 @@ struct BackupRow: View {
     let backup: BackupInfo
     let onBrowse: () -> Void
     let onDelete: () -> Void
+    let onResume: () -> Void
     @State private var isExporting = false
 
     var body: some View {
@@ -855,6 +858,8 @@ struct BackupRow: View {
 
                     if backup.isFullBackup {
                         StatusChip(text: "Full", color: .brandAccent)
+                    } else {
+                        StatusChip(text: "Incomplete", color: .orange)
                     }
                 }
 
@@ -885,6 +890,14 @@ struct BackupRow: View {
             Spacer()
 
             HStack(spacing: 8) {
+                if !backup.isFullBackup {
+                    Button("Resume", action: onResume)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.orange)
+                        .controlSize(.small)
+                        .help("Resume incomplete backup from saved progress")
+                }
+
                 Button("Browse") { onBrowse() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
