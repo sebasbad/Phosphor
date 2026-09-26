@@ -84,7 +84,10 @@ struct BackupListView: View {
             } else {
                 List {
                     ForEach(backupVM.backups) { backup in
-                        BackupRow(backup: backup) {
+                        BackupRow(
+                            backup: backup,
+                            activity: backupVM.activity(for: backup.udid)
+                        ) {
                             if backupVM.openBackupBrowser(backup) {
                                 onBrowseBackup()
                             }
@@ -93,6 +96,8 @@ struct BackupListView: View {
                             showDeleteConfirm = true
                         } onResume: {
                             Task { await backupVM.resumeBackup(udid: backup.udid, device: deviceVM.devices.first(where: { $0.id == backup.udid })) }
+                        } onPause: {
+                            pauseBackupActivity(for: backup.udid)
                         }
                     }
                 }
@@ -216,6 +221,7 @@ struct BackupListView: View {
     private var activeBackupActivities: [BackupViewModel.BackupActivity] {
         backupVM.backupActivities.values
             .filter(\.isActive)
+            .filter { !hasBackupRow(for: $0.udid) }
             .sorted { lhs, rhs in
                 switch (lhs.state, rhs.state) {
                 case (.running, .queued): true
@@ -223,6 +229,25 @@ struct BackupListView: View {
                 default: lhs.udid < rhs.udid
                 }
             }
+    }
+
+    /// Pause & Save for a backup rendered inside its persisted row. Finalization
+    /// is not resumable, so it needs the same confirmation the activity card shows.
+    private func pauseBackupActivity(for udid: String) {
+        guard let activity = backupVM.activity(for: udid) else { return }
+        if activity.isNonResumableFinalizationPhase {
+            pendingCancelActivityUDID = udid
+            showNonResumableCancelConfirm = true
+        } else {
+            backupVM.cancelBackup(udid: udid)
+        }
+    }
+
+    /// True when a device with an in-flight backup already has a persisted row.
+    /// That row renders the activity inline, so the standalone activity card
+    /// would be a second surface for the same device.
+    private func hasBackupRow(for udid: String) -> Bool {
+        backupVM.backups.contains { $0.udid == udid }
     }
 
     private var backedUpDeviceCount: Int {
@@ -657,14 +682,6 @@ struct BackupListView: View {
                             .tint(.orange)
                             .controlSize(.small)
                             .help("No progress for 5+ minutes - resume this backup")
-                        } else if !activity.isProcessAlive {
-                            Button("Restart") {
-                                Task { await backupVM.resumeBackup(udid: activity.udid) }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.red)
-                            .controlSize(.small)
-                            .help("Backup process stopped reporting - click to restart")
                         } else {
                             Button {
                                 if activity.isNonResumableFinalizationPhase {
@@ -845,10 +862,46 @@ struct BackupIssueSheet: View {
 
 struct BackupRow: View {
     let backup: BackupInfo
+    var activity: BackupViewModel.BackupActivity?
     let onBrowse: () -> Void
     let onDelete: () -> Void
     let onResume: () -> Void
+    let onPause: () -> Void
     @State private var isExporting = false
+
+    private var isActive: Bool { activity?.isActive == true }
+    private var isStalled: Bool { activity?.isStalled == true }
+
+    /// Progress for a backup running inside this row. The row keeps its identity
+    /// while resuming instead of handing the device off to a separate card.
+    @ViewBuilder
+    private var activityStatus: some View {
+        if let activity, isActive {
+            VStack(alignment: .leading, spacing: 4) {
+                ProgressView(value: activity.displayProgressFraction, total: 1.0)
+                    .progressViewStyle(.linear)
+                    .tint(isStalled ? .orange : .brandAccent)
+
+                HStack(spacing: 6) {
+                    Text(isStalled ? "Stalled - no progress for 5+ min" : activity.progressText)
+                        .font(.system(size: 10))
+                        .foregroundStyle(isStalled ? Color.orange : .secondary)
+                        .lineLimit(1)
+                    if let speed = activity.speed {
+                        Text("- \(speed)")
+                        if let eta = activity.eta { Text("- ETA \(eta)") }
+                    }
+                }
+                .font(.system(size: 10))
+
+                if let metrics = activity.finalizationMetrics {
+                    Text("Finalizing: \(metrics.filesMoved.formatted()) / ~\(metrics.totalFiles.formatted()) files")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
 
     var body: some View {
         HStack(spacing: 14) {
@@ -903,12 +956,27 @@ struct BackupRow: View {
                 }
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
+
+                activityStatus
             }
 
             Spacer()
 
             HStack(spacing: 8) {
-                if !backup.isFullBackup {
+                if isActive {
+                    if isStalled {
+                        Button("Resume", action: onResume)
+                            .buttonStyle(.borderedProminent)
+                            .tint(.orange)
+                            .controlSize(.small)
+                            .help("No progress for 5+ minutes - resume this backup")
+                    } else {
+                        Button("Pause & Save", action: onPause)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("Stops the backup and saves progress. You can resume later.")
+                    }
+                } else if !backup.isFullBackup {
                     Button("Resume", action: onResume)
                         .buttonStyle(.borderedProminent)
                         .tint(.orange)
