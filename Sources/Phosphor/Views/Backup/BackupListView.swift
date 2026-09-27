@@ -687,7 +687,14 @@ struct BackupListView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("\(deviceIdentity(for: activity.udid)), \(activity.displayProgressText)")
                         Spacer()
-                        if activity.isStalled {
+                        if activity.isBusy {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text(activity.transition == .restarting ? "Restarting…" : "Pausing…")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else if activity.isStalled {
                             Button("Resume") {
                                 Task { await backupVM.restartStalledBackup(udid: activity.udid, device: deviceVM.devices.first(where: { $0.id == activity.udid })) }
                             }
@@ -939,6 +946,7 @@ struct BackupRow: View {
 
     private var isActive: Bool { activity?.isActive == true }
     private var isStalled: Bool { activity?.isStalled == true }
+    private var isBusy: Bool { activity?.isBusy == true }
 
     /// Progress for a backup running inside this row. The row keeps its identity
     /// while resuming instead of handing the device off to a separate card.
@@ -1073,7 +1081,14 @@ struct BackupRow: View {
             Spacer()
 
             HStack(spacing: 8) {
-                if isActive {
+                if isBusy {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text(activity?.transition == .restarting ? "Restarting…" : "Pausing…")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                } else if isActive {
                     if isStalled {
                         Button("Resume", action: onResume)
                             .buttonStyle(.borderedProminent)
