@@ -501,6 +501,14 @@ struct DeviceOverviewView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                         Spacer()
+                        if activity.isBusy {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text(activity.transition == .restarting ? "Restarting…" : "Pausing…")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
                         Button {
                             if activity.isNonResumableFinalizationPhase {
                                 pendingCancelDeviceID = device.id
@@ -513,6 +521,7 @@ struct DeviceOverviewView: View {
                         }
                         .controlSize(.small)
                         .help(activity.isNonResumableFinalizationPhase ? "Warning: Finalization is non-resumable. Stopping now will abort this completed backup." : "Stops the backup and saves progress. You can resume later.")
+                        }
                     }
                     ProgressView(
                         value: activity.displayProgressFraction,

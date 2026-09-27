@@ -109,6 +109,14 @@ final class BackupViewModel: ObservableObject {
         // Observability integration
         var observabilityCoordinator: BackupObservabilityCoordinator?
 
+        /// Set while a pause/restart is in flight. The backup process dies
+        /// asynchronously, so without this the activity sits on a stale
+        /// "running" state: the button stays live, a second click stacks, and
+        /// a slow termination reads as a stall.
+        enum Transition: Equatable { case pausing, restarting }
+        var transition: Transition?
+        var isBusy: Bool { transition != nil }
+
         var observabilityPhase: BackupPhase {
             if isFinalizing { return .finalization }
             if isResume { return .incrementalResume }
@@ -161,6 +169,7 @@ final class BackupViewModel: ObservableObject {
         }
 
         var isStalled: Bool {
+            guard transition == nil else { return false }
             guard case .running = state else { return false }
             return Date().timeIntervalSince(lastProgressUpdate) > 300 // 5 minutes without progress
         }
@@ -509,7 +518,10 @@ final class BackupViewModel: ObservableObject {
                 // that handoff instead of letting the promoted job start anyway.
                 backupJobTasks[udid]?.cancel()
             }
-            updateActivity(udid: udid) { $0.progressText = "Cancelling..." }
+            updateActivity(udid: udid) {
+                $0.progressText = "Pausing..."
+                $0.transition = .pausing
+            }
         case .notFound:
             break
         }
@@ -538,6 +550,8 @@ final class BackupViewModel: ObservableObject {
         }
         guard activity(for: udid)?.isNonResumableFinalizationPhase != true else { return }
         cancelBackup(udid: udid)
+        // The user pressed Resume, not Pause: label the teardown accordingly.
+        updateActivity(udid: udid) { $0.transition = .restarting; $0.progressText = "Restarting..." }
         for _ in 0..<20 where backupActivities[udid]?.isActive == true {
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
@@ -714,6 +728,7 @@ final class BackupViewModel: ObservableObject {
     }
 
     private func finishBackupJob(udid: String) {
+        updateActivity(udid: udid) { $0.transition = nil }
         finalizationTasks.removeValue(forKey: udid)?.cancel()
         livenessTasks.removeValue(forKey: udid)?.cancel()
         requestTracker.finish(udid: udid)
@@ -833,6 +848,9 @@ final class BackupViewModel: ObservableObject {
         var transferredBytes: Int64?
         var totalBytes: Int64?
         updateActivity(udid: udid) { activity in
+            // A pause/restart is tearing the process down; late progress lines
+            // must not overwrite the "Pausing..." status the user was promised.
+            guard activity.transition == nil else { return }
             activity.progressText = text
             activity.lastProgressUpdate = Date()
             activity.processAlive = true
