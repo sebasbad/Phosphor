@@ -113,6 +113,42 @@ def test_inflight_transitions_disable_controls_and_suppress_stall(root: Path) ->
     )
 
 
+def test_phase_durations_come_from_transitions_not_samples(root: Path) -> None:
+    """Per-phase duration must be summed from transition records. Summing
+    sample.duration overcounts: each sample is elapsed-since-phase-start."""
+    tracker = read(root, "Sources/Phosphor/Utilities/PhaseTransitionTracker.swift")
+    collector = read(root, "Sources/Phosphor/Utilities/BackupMetricsCollector.swift")
+    coordinator = read(root, "Sources/Phosphor/Utilities/BackupObservabilityCoordinator.swift")
+    assert "func durationStats(for phase: String)" in tracker
+    assert "$0.from.rawValue == phase" in tracker, "durations belong to the from-phase"
+    assert "result[transition.from.rawValue, default: 0] += duration" in tracker
+    # The broken duplicate is gone, not left as a stub.
+    assert "phaseHistory.map { $0.duration }.reduce(0, +)" not in collector
+    assert "currentPhaseStartTime" not in collector
+    # And the correct source is actually surfaced.
+    assert "phaseDurations: phaseTracker.allPhaseDurations" in coordinator
+    assert "let phaseDurations: [String: TimeInterval]" in coordinator
+
+
+def test_phase_detail_does_not_fabricate_zeros(root: Path) -> None:
+    coordinator = read(root, "Sources/Phosphor/Utilities/BackupObservabilityCoordinator.swift")
+    for fabricated in [
+        "return .sanitization(filesScanned: 0",
+        "return .incrementalResume(filesResumed: 0",
+        "return .fullBackup(bytesTransferred: 0",
+        "return .finalization(filesMoved: 0",
+        "return .verification(bucketsScanned: 0",
+        "TotalBytes: 0",
+    ]:
+        assert fabricated not in coordinator, f"fabricated zero detail still present: {fabricated}"
+    # The one phase with real data now uses it.
+    assert "return .fullBackup(bytesTransferred: bytesTransferred, totalBytes: totalBytes" in coordinator
+    # And the diagnosis dialog shows the real per-phase time.
+    model = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+    assert "Time per phase:" in model
+    assert "snapshot.phaseDurations" in model
+
+
 def test_eta_is_not_fabricated_from_unknown_sizes(root: Path) -> None:
     """A nil size must not produce a confident-looking zero-second ETA."""
     coordinator = read(root, "Sources/Phosphor/Utilities/BackupObservabilityCoordinator.swift")
