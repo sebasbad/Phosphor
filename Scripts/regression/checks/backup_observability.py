@@ -99,11 +99,18 @@ def test_inflight_transitions_disable_controls_and_suppress_stall(root: Path) ->
     assert "guard activity.transition == nil else { return }" in model
     # Teardown clears it so buttons come back.
     assert 'updateActivity(udid: udid) { $0.transition = nil }' in model
-    # Every surface disables its controls while busy and names the state.
-    for src, name in [(view, "backups list"), (device, "device screen")]:
-        assert "isBusy" in src, f"{name} must gate controls on isBusy"
-        assert "Pausing…" in src, f"{name} must name the pausing state"
-        assert "Restarting…" in src, f"{name} must name the restarting state"
+    # The backups list replaces its controls while busy and names the state.
+    assert "isBusy" in view and "Pausing…" in view and "Restarting…" in view
+    # The device screen no longer hosts a backup progress card: live progress
+    # belongs to the backups list, and the quick-action button already disables
+    # itself while a backup is active.
+    assert "if let activity = backupVM.activity(for: device.id), activity.isActive" not in device, (
+        "device screen should not render the backup progress card"
+    )
+    assert "displayProgressFraction" not in device, "device screen should not show backup progress"
+    assert ".disabled(backupVM.isBackupActive(for: device.id))" in device, (
+        "device screen backup button must stay disabled while backing up"
+    )
 
 
 def test_eta_is_not_fabricated_from_unknown_sizes(root: Path) -> None:

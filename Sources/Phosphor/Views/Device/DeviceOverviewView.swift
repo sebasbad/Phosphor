@@ -12,8 +12,6 @@ struct DeviceOverviewView: View {
     @State private var copiedField: String?
     @State private var showFullWiFiBackupConfirm = false
     @State private var pendingBackupDevice: DeviceInfo?
-    @State private var showNonResumableCancelConfirm = false
-    @State private var pendingCancelDeviceID: String?
     @State private var pendingIncompleteBackupIssue: BackupManager.BackupFailure?
     @State private var showIncompleteBackupTrashConfirm = false
     var onShowPreflight: ((DeviceInfo) -> Void)? = nil
@@ -91,19 +89,6 @@ struct DeviceOverviewView: View {
             Button("Cancel", role: .cancel) { pendingBackupDevice = nil }
         } message: {
             Text("This device is connected over Wi-Fi. Full backups can be slower and more sensitive to sleep, lock, and network interruptions. Incremental Wi-Fi Backup is recommended when a complete backup already exists.")
-        }
-        .alert("Stop Backup During Finalization?", isPresented: $showNonResumableCancelConfirm) {
-            Button("Keep Running", role: .cancel) {
-                pendingCancelDeviceID = nil
-            }
-            Button("Stop Anyway (Non-Resumable)", role: .destructive) {
-                if let udid = pendingCancelDeviceID {
-                    backupVM.cancelBackup(udid: udid)
-                }
-                pendingCancelDeviceID = nil
-            }
-        } message: {
-            Text("The backup is currently consolidating and sealing its manifest on disk. This finalization phase is not partially resumable — stopping now will discard this completed backup and require starting fresh. Are you sure you want to stop?")
         }
     }
 
@@ -475,64 +460,6 @@ struct DeviceOverviewView: View {
                     }
                     .disabled(deviceVM.isEnablingWiFiSync)
                     .help("Enable Finder's Show this iPhone when on Wi-Fi option for this trusted USB device")
-                }
-            }
-
-            if let activity = backupVM.activity(for: device.id), activity.isActive {
-                VStack(alignment: .leading, spacing: 8) {
-                    if activity.isAwaitingPasscode {
-                        HStack(spacing: 8) {
-                            Image(systemName: "lock.shield.fill")
-                                .foregroundStyle(.orange)
-                                .font(.system(size: 14, weight: .semibold))
-                            Text("Please unlock your device and enter your passcode or tap 'Trust' to proceed...")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.orange)
-                        }
-                        .padding(.vertical, 4)
-                        .padding(.horizontal, 8)
-                        .background(Color.orange.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                    }
-
-                    HStack {
-                        Text(activity.displayProgressText)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                        Spacer()
-                        if activity.isBusy {
-                            HStack(spacing: 6) {
-                                ProgressView().controlSize(.small)
-                                Text(activity.transition == .restarting ? "Restarting…" : "Pausing…")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
-                            }
-                        } else {
-                        Button {
-                            if activity.isNonResumableFinalizationPhase {
-                                pendingCancelDeviceID = device.id
-                                showNonResumableCancelConfirm = true
-                            } else {
-                                backupVM.cancelBackup(udid: device.id)
-                            }
-                        } label: {
-                            Label("Pause & Save", systemImage: "pause.circle")
-                        }
-                        .controlSize(.small)
-                        .help(activity.isNonResumableFinalizationPhase ? "Warning: Finalization is non-resumable. Stopping now will abort this completed backup." : "Stops the backup and saves progress. You can resume later.")
-                        }
-                    }
-                    ProgressView(
-                        value: activity.displayProgressFraction,
-                        total: 1.0
-                    )
-                    .progressViewStyle(.linear)
-                    .tint(activity.isAwaitingPasscode ? .orange : .brandAccent)
-
-                    Text(activity.isFinalizing ? (activity.finalizationMetrics != nil ? "Reorganizing files from snapshot onto disk. Do not disconnect." : "Consolidating files and sealing backup manifest on disk...") : "Progress is saved automatically. You can resume later.")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
                 }
             }
 
