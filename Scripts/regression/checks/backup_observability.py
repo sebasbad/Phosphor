@@ -38,6 +38,51 @@ def test_observability_is_wired_to_the_backup_row(root: Path) -> None:
         assert token in view, f"indicator not rendered: {token}"
 
 
+def test_stalled_resume_restarts_instead_of_deadlocking(root: Path) -> None:
+    """Resume while stalled used to re-enqueue, hit .duplicate, and park."""
+    model = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+    view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+    assert "func restartStalledBackup(udid:" in model, "stalled resume needs a restart path"
+    assert "guard activity(for: udid)?.isStalled == true else {" in model, "must fall back to plain resume"
+    assert "guard activity(for: udid)?.isNonResumableFinalizationPhase != true else { return }" in model, (
+        "cancelling during finalization discards the backup"
+    )
+    assert "cancelBackup(udid: udid)" in model, "must cancel the wedged job before re-enqueueing"
+    # Both stalled Resume buttons must use the restart path, not plain resume.
+    assert "restartStalledBackup(udid: backup.udid" in view, "persisted-row Resume must restart"
+    assert "restartStalledBackup(udid: activity.udid" in view, "activity-card Resume must restart"
+    assert "resumeBackup(udid: activity.udid)" not in view, "stalled card still calls plain resume"
+
+
+def test_finalization_progress_is_not_a_stall(root: Path) -> None:
+    """The watchdog updated metrics but not lastProgressUpdate, so a long
+    finalization (>5 min) read as stalled and showed a resume that cannot run."""
+    model = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+    assert "activity.finalizationMetrics = metrics" in model
+    assert "activity.lastProgressUpdate = Date()" in model, "finalization movement is progress"
+
+
+def test_incomplete_metadata_failure_keeps_tool_output(root: Path) -> None:
+    """The resume path's most common failure kept only the folder path, so the
+    details sheet had nothing to explain the failure with."""
+    manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    assert "let stderrTail = pymobiledeviceStderrTail.joined(separator: \"\\n\")" in manager
+    assert "technicalDetails: stderrTail.isEmpty ? path : \"\\(path)\\n\\n\\(stderrTail)\"" in manager
+
+
+def test_backup_issue_and_diagnosis_are_surfaced(root: Path) -> None:
+    model = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+    view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+    device = read(root, "Sources/Phosphor/Views/Device/DeviceOverviewView.swift")
+    assert "func diagnosisText(for udid:" in model, "stall diagnosis must exist"
+    assert "exportSnapshot()" in model, "diagnosis should include the observability snapshot"
+    assert "struct BackupDiagnosisSheet" in view, "diagnosis needs a dialog"
+    assert "Diagnose…" in view, "stalled rows must offer diagnosis"
+    # The device screen dropped the details the list already showed.
+    assert "BackupIssueSheet(" in device, "device screen should reuse the detailed issue sheet"
+    assert '.alert("Backup Issue"' not in device, "plain alert hid the technical details"
+
+
 def test_eta_is_not_fabricated_from_unknown_sizes(root: Path) -> None:
     """A nil size must not produce a confident-looking zero-second ETA."""
     coordinator = read(root, "Sources/Phosphor/Utilities/BackupObservabilityCoordinator.swift")
