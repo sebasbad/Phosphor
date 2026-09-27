@@ -113,6 +113,22 @@ def test_inflight_transitions_disable_controls_and_suppress_stall(root: Path) ->
     )
 
 
+def test_resume_phase_detail_uses_real_baseline(root: Path) -> None:
+    """Resume detail carried filesRemaining: 0, a fabricated value, and the
+    counts were never plumbed from the pre-resume scan."""
+    types = read(root, "Sources/Phosphor/Utilities/BackupObservabilityTypes.swift")
+    coordinator = read(root, "Sources/Phosphor/Utilities/BackupObservabilityCoordinator.swift")
+    model = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+    assert "case incrementalResume(filesResumed: Int, baselineFraction: Double)" in types
+    assert "filesRemaining" not in types, "remaining files are unknown and must not be invented"
+    assert "struct PhaseContext" in types
+    assert "return .incrementalResume(filesResumed: filesResumed, baselineFraction: baseline)" in coordinator
+    # Real file count comes from the incomplete-backup scan, not a constant.
+    assert "resumeFileCount = stats.fileCount" in model
+    assert "$0.resumeFileBaseline = resumeFileCount" in model
+    assert "context.filesResumed = activity.resumeFileBaseline" in model
+
+
 def test_phase_durations_come_from_transitions_not_samples(root: Path) -> None:
     """Per-phase duration must be summed from transition records. Summing
     sample.duration overcounts: each sample is elapsed-since-phase-start."""

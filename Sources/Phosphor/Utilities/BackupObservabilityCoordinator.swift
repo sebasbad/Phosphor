@@ -98,7 +98,8 @@ final class BackupObservabilityCoordinator: ObservableObject {
         speedFilesPerSec: Double?,
         eta: TimeInterval?,
         isFinalizing: Bool,
-        finalizationMetrics: FinalizationProgressTracker.Metrics?
+        finalizationMetrics: FinalizationProgressTracker.Metrics?,
+        context: PhaseContext = PhaseContext()
     ) {
         let now = Date()
         lastProgressUpdate = now
@@ -130,7 +131,8 @@ final class BackupObservabilityCoordinator: ObservableObject {
             phaseDetail: buildPhaseDetail(
                 finalizationMetrics: finalizationMetrics,
                 bytesTransferred: bytesTransferred,
-                totalBytes: totalBytes
+                totalBytes: totalBytes,
+                context: context
             )
         )
 
@@ -243,13 +245,18 @@ final class BackupObservabilityCoordinator: ObservableObject {
     private func buildPhaseDetail(
         finalizationMetrics: FinalizationProgressTracker.Metrics?,
         bytesTransferred: Int64?,
-        totalBytes: Int64?
+        totalBytes: Int64?,
+        context: PhaseContext
     ) -> PhaseDetail? {
         switch currentPhase {
         case .fullBackup:
             // Sizes come from the parsed tqdm progress line.
             guard let bytesTransferred, let totalBytes, totalBytes > 0 else { return nil }
             return .fullBackup(bytesTransferred: bytesTransferred, totalBytes: totalBytes, currentDomain: nil)
+        case .incrementalResume:
+            guard let filesResumed = context.filesResumed,
+                  let baseline = context.resumeBaselineFraction else { return nil }
+            return .incrementalResume(filesResumed: filesResumed, baselineFraction: baseline)
         case .finalization:
             guard let metrics = finalizationMetrics else { return nil }
             return .finalization(filesMoved: metrics.filesMoved, totalFiles: metrics.totalFiles, currentStage: "\(metrics.stage)")
@@ -257,10 +264,10 @@ final class BackupObservabilityCoordinator: ObservableObject {
             guard let metrics = finalizationMetrics,
                   case .verifying(let scanned, let total) = metrics.stage else { return nil }
             return .verification(bucketsScanned: scanned, totalBuckets: total, currentBucket: nil)
-        case .sanitization, .incrementalResume, .fallbackIdevicebackup2,
-             .completed, .failed, .cancelled, .detecting:
-            // No real counts are plumbed out of these paths yet; the phase name
-            // is shown instead of invented numbers.
+        case .sanitization, .fallbackIdevicebackup2, .completed, .failed, .cancelled, .detecting:
+            // These phases are either not selected by observabilityPhase or have
+            // no data plumbed out of the manager yet. The phase name is shown
+            // rather than invented numbers.
             return nil
         }
     }

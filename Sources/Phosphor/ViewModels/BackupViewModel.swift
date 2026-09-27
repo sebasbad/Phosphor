@@ -96,6 +96,9 @@ final class BackupViewModel: ObservableObject {
         var speed: String?
         var isResume: Bool = false
         var resumeBaselineFraction: Double = 0.0
+        /// Files already on disk when this resume started, from the pre-resume
+        /// incomplete-backup stats. Real baseline for the resume phase detail.
+        var resumeFileBaseline: Int?
         var isAwaitingPasscode: Bool = false
         var errorMessage: String?
 
@@ -653,11 +656,13 @@ final class BackupViewModel: ObservableObject {
         backupManagers[udid] = manager
         let isResume = request.isResume
         var baselineFraction: Double = 0.0
+        var resumeFileCount: Int?
         if isResume {
             let stats = await Task.detached(priority: .utility) {
                 BackupManager.incompleteBackupStats(for: udid)
             }.value
             if let stats {
+                resumeFileCount = stats.fileCount
                 if let device = request.device, let calculatedFraction = stats.completionFraction(for: device) {
                     // Accurately reflect preserved progress up to 99%
                     baselineFraction = min(max(calculatedFraction, 0.05), 0.99)
@@ -678,6 +683,7 @@ final class BackupViewModel: ObservableObject {
             $0.state = .running
             $0.isResume = isResume
             $0.resumeBaselineFraction = baselineFraction
+            $0.resumeFileBaseline = resumeFileCount
             $0.progressText = isResume ? "Resuming..." : "Preparing..."
             $0.lastProgressUpdate = Date()
         }
@@ -914,7 +920,13 @@ final class BackupViewModel: ObservableObject {
                     speedFilesPerSec: nil,
                     eta: activity.eta.flatMap(Self.parseEtaToSeconds),
                     isFinalizing: activity.isFinalizing,
-                    finalizationMetrics: activity.finalizationMetrics
+                    finalizationMetrics: activity.finalizationMetrics,
+                    context: {
+                        var context = PhaseContext()
+                        context.filesResumed = activity.resumeFileBaseline
+                        context.resumeBaselineFraction = activity.resumeBaselineFraction > 0 ? activity.resumeBaselineFraction : nil
+                        return context
+                    }()
                 )
                 activity.phaseMetrics = coordinator.phaseMetrics
                 activity.predictiveETA = coordinator.predictiveETA
