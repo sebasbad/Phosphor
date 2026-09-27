@@ -178,6 +178,17 @@ public struct BackupFailure: Codable, Sendable {
     }
 }
 
+/// Real per-phase observations the coordinator cannot derive from tool output:
+/// they are assembled where the data lives (the view model) and handed over as
+/// one value instead of widening `updateMetrics` further. A nil field means
+/// "unknown", never zero.
+public struct PhaseContext: Sendable {
+    public var filesResumed: Int?
+    public var resumeBaselineFraction: Double?
+
+    public init() {}
+}
+
 /// Metadata for a specific backup phase
 public struct PhaseMetrics: Codable, Sendable {
     public let phase: BackupPhase
@@ -235,7 +246,7 @@ public struct PhaseMetrics: Codable, Sendable {
 /// Detailed phase-specific metadata
 public enum PhaseDetail: Codable, Sendable {
     case sanitization(filesScanned: Int, filesCleaned: Int, walCheckpointed: Bool)
-    case incrementalResume(filesResumed: Int, filesRemaining: Int, baselineFraction: Double)
+    case incrementalResume(filesResumed: Int, baselineFraction: Double)
     case fullBackup(bytesTransferred: Int64, totalBytes: Int64, currentDomain: String?)
     case fallbackIdevicebackup2(reason: String)
     case finalization(filesMoved: Int, totalFiles: Int, currentStage: String)
@@ -248,8 +259,8 @@ public enum PhaseDetail: Codable, Sendable {
         switch self {
         case .sanitization(let filesScanned, let filesCleaned, let walCheckpointed):
             return "Scanned \(filesScanned) files, cleaned \(filesCleaned), WAL checkpointed: \(walCheckpointed)"
-        case .incrementalResume(let filesResumed, let filesRemaining, let baseline):
-            return "Resumed \(filesResumed) files, \(filesRemaining) remaining (baseline: \(Int(baseline * 100))%)"
+        case .incrementalResume(let filesResumed, let baseline):
+            return "\(filesResumed.formatted()) files already present (baseline: \(Int(baseline * 100))%)"
         case .fullBackup(let bytesTransferred, let totalBytes, let domain):
             let domainStr = domain.map { " in \($0)" } ?? ""
             return "\(ByteCountFormatter.string(fromByteCount: bytesTransferred, countStyle: .file)) of \(ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file))\(domainStr)"
