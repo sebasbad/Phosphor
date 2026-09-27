@@ -83,6 +83,29 @@ def test_backup_issue_and_diagnosis_are_surfaced(root: Path) -> None:
     assert '.alert("Backup Issue"' not in device, "plain alert hid the technical details"
 
 
+def test_inflight_transitions_disable_controls_and_suppress_stall(root: Path) -> None:
+    """A slow process teardown used to read as a stall and leave buttons live."""
+    model = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+    view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+    device = read(root, "Sources/Phosphor/Views/Device/DeviceOverviewView.swift")
+    assert "enum Transition: Equatable { case pausing, restarting }" in model
+    assert "var isBusy: Bool { transition != nil }" in model
+    # A pausing/restarting job is not stalled.
+    assert "guard transition == nil else { return false }" in model, "transition must suppress stall"
+    # Pause marks the transition immediately instead of waiting on process death.
+    assert '$0.transition = .pausing' in model
+    assert '$0.transition = .restarting' in model
+    # Late progress lines must not overwrite the promised status.
+    assert "guard activity.transition == nil else { return }" in model
+    # Teardown clears it so buttons come back.
+    assert 'updateActivity(udid: udid) { $0.transition = nil }' in model
+    # Every surface disables its controls while busy and names the state.
+    for src, name in [(view, "backups list"), (device, "device screen")]:
+        assert "isBusy" in src, f"{name} must gate controls on isBusy"
+        assert "Pausing…" in src, f"{name} must name the pausing state"
+        assert "Restarting…" in src, f"{name} must name the restarting state"
+
+
 def test_eta_is_not_fabricated_from_unknown_sizes(root: Path) -> None:
     """A nil size must not produce a confident-looking zero-second ETA."""
     coordinator = read(root, "Sources/Phosphor/Utilities/BackupObservabilityCoordinator.swift")
