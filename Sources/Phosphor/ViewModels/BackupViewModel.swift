@@ -526,6 +526,74 @@ final class BackupViewModel: ObservableObject {
         )
     }
 
+    /// Resume click while a job is stalled: the in-flight job is wedged, so a
+    /// second enqueue returns .duplicate and parks a waiter on a job that may
+    /// never finish — the click looks dead. Cancel it, wait for teardown (the
+    /// queue entry is removed on a task hop), then resume fresh.
+    /// Never during finalization: cancelling there discards a completed backup.
+    func restartStalledBackup(udid: String, device: DeviceInfo? = nil) async {
+        guard activity(for: udid)?.isStalled == true else {
+            await resumeBackup(udid: udid, device: device)
+            return
+        }
+        guard activity(for: udid)?.isNonResumableFinalizationPhase != true else { return }
+        cancelBackup(udid: udid)
+        for _ in 0..<20 where backupActivities[udid]?.isActive == true {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        await resumeBackup(udid: udid, device: device)
+    }
+
+    /// Human-readable diagnosis of a stalled or failing backup: what phase it
+    /// was in, when it last made progress, what the phase timeline and
+    /// throughput samples say. This is the answer to "why is Resume doing
+    /// nothing" — previously that state produced no visible information at all.
+    func diagnosisText(for udid: String) -> String? {
+        guard let activity = backupActivities[udid] else { return nil }
+        var lines: [String] = []
+        lines.append("State: \(activity.state)")
+        lines.append("Phase: \((activity.phaseMetrics?.phase ?? activity.observabilityPhase).displayName)")
+        lines.append("Last progress: \(activity.progressText)")
+        if let fraction = activity.progressFraction {
+            lines.append("Progress fraction: \(Int(fraction * 100))%")
+        }
+        lines.append("Last progress update: \(Int(Date().timeIntervalSince(activity.lastProgressUpdate)))s ago")
+        lines.append("Stalled (no progress for 5+ min): \(activity.isStalled ? "yes" : "no")")
+        if let speed = activity.speed { lines.append("Last speed: \(speed)") }
+        if let eta = activity.eta { lines.append("Last ETA: \(eta)") }
+        if let error = activity.errorMessage { lines.append("Error: \(error)") }
+
+        if let snapshot = activity.observabilityCoordinator?.exportSnapshot() {
+            if !snapshot.phaseTransitions.isEmpty {
+                lines.append("")
+                lines.append("Phase timeline:")
+                for transition in snapshot.phaseTransitions {
+                    let duration = transition.duration.map { " (\(Int($0))s)" } ?? ""
+                    lines.append("  \(transition.from.displayName) -> \(transition.to.displayName) at \(transition.timestamp.formatted(date: .omitted, time: .standard))\(duration)")
+                }
+            }
+            let stats = snapshot.throughputStats
+            if stats.samplesCount > 0 {
+                lines.append("")
+                lines.append("Throughput (\(stats.samplesCount) samples):")
+                lines.append("  last: \(formatBytesPerSecond(stats.currentBytesPerSecond))")
+                lines.append("  avg:  \(formatBytesPerSecond(stats.averageBytesPerSecond))")
+                lines.append("  peak: \(formatBytesPerSecond(stats.peakBytesPerSecond))")
+                if snapshot.throughputTrend != .insufficient {
+                    lines.append("  trend: \(snapshot.throughputTrend.description)")
+                }
+            } else {
+                lines.append("")
+                lines.append("Throughput: no speed samples received — the backup tool produced no throughput output.")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func formatBytesPerSecond(_ value: Double) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(value), countStyle: .file) + "/s"
+    }
+
     private func cancelBackupRequest(udid: String, requestID: UUID) {
         switch requestTracker.cancel(requestID, udid: udid) {
         case .cancelJob:
@@ -895,6 +963,10 @@ final class BackupViewModel: ObservableObject {
                     self.updateActivity(udid: udid) { activity in
                         guard case .running = activity.state else { return }
                         activity.finalizationMetrics = metrics
+                        // On-disk consolidation is real progress. Without this a
+                        // finalization longer than 5 minutes reads as "stalled" and
+                        // the row swaps Pause & Save for a resume that cannot run.
+                        activity.lastProgressUpdate = Date()
                     }
                     self.refreshLegacyProgressState()
                 }

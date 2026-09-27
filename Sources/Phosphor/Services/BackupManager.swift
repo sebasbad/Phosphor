@@ -751,10 +751,14 @@ final class BackupManager: ObservableObject {
             let message = hasPayload
                 ? "The backup command finished, but the resulting backup metadata is incomplete. You can resume to complete remaining files, or move the folder to Trash and start fresh."
                 : "The backup command finished, but the resulting backup metadata is incomplete. Move the incomplete folder to Trash, then run a fresh full backup with the device unlocked and connected over USB when possible."
+            // Without the tool output this failure is undiagnosable: the device
+            // console is the only place the resume's actual errors live, and the
+            // generic metadata message intentionally explains none of them.
+            let stderrTail = pymobiledeviceStderrTail.joined(separator: "\n")
             lastBackupFailure = BackupFailure(
                 title: "Backup Metadata Incomplete",
                 message: message,
-                technicalDetails: path,
+                technicalDetails: stderrTail.isEmpty ? path : "\(path)\n\n\(stderrTail)",
                 recoveryAction: recoveryAction,
                 udid: udid,
                 recoveryPath: path

@@ -22,6 +22,8 @@ struct BackupListView: View {
     @State private var isLoadingIncompleteStats = false
     @State private var showNonResumableCancelConfirm = false
     @State private var pendingCancelActivityUDID: String?
+    @State private var diagnosisUDID: String?
+    @State private var showDiagnosisSheet = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -95,9 +97,12 @@ struct BackupListView: View {
                             backupToDelete = backup
                             showDeleteConfirm = true
                         } onResume: {
-                            Task { await backupVM.resumeBackup(udid: backup.udid, device: deviceVM.devices.first(where: { $0.id == backup.udid })) }
+                            Task { await backupVM.restartStalledBackup(udid: backup.udid, device: deviceVM.devices.first(where: { $0.id == backup.udid })) }
                         } onPause: {
                             pauseBackupActivity(for: backup.udid)
+                        } onDiagnose: {
+                            diagnosisUDID = backup.udid
+                            showDiagnosisSheet = true
                         }
                     }
                 }
@@ -180,6 +185,14 @@ struct BackupListView: View {
         .sheet(isPresented: $showScheduleSheet) {
             BackupScheduleSheet()
                 .frame(width: 480, height: 500)
+        }
+        .sheet(isPresented: $showDiagnosisSheet) {
+            BackupDiagnosisSheet(
+                udid: diagnosisUDID ?? "",
+                text: diagnosisUDID.flatMap { backupVM.diagnosisText(for: $0) }
+                    ?? "No live activity for this device.",
+                dismiss: { showDiagnosisSheet = false; diagnosisUDID = nil }
+            )
         }
         .onAppear { backupVM.loadBackups() }
     }
@@ -676,12 +689,18 @@ struct BackupListView: View {
                         Spacer()
                         if activity.isStalled {
                             Button("Resume") {
-                                Task { await backupVM.resumeBackup(udid: activity.udid) }
+                                Task { await backupVM.restartStalledBackup(udid: activity.udid, device: deviceVM.devices.first(where: { $0.id == activity.udid })) }
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(.orange)
                             .controlSize(.small)
-                            .help("No progress for 5+ minutes - resume this backup")
+                            .help("No progress for 5+ minutes - restarts this backup from saved progress")
+                            Button("Diagnose…") {
+                                diagnosisUDID = activity.udid
+                                showDiagnosisSheet = true
+                            }
+                            .controlSize(.small)
+                            .help("Show why this backup stalled")
                         } else {
                             Button {
                                 if activity.isNonResumableFinalizationPhase {
@@ -860,6 +879,54 @@ struct BackupIssueSheet: View {
     }
 }
 
+/// Live diagnosis for a stalled or failing backup. The stalled state used to
+/// show a Resume button and nothing else, so a backup that produced no progress
+/// gave the user no way to tell whether it was transferring, wedged, or dead.
+struct BackupDiagnosisSheet: View {
+    let udid: String
+    let text: String
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "stethoscope")
+                    .foregroundStyle(.orange)
+                    .font(.system(size: 24))
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Backup Diagnosis")
+                        .font(.title3.weight(.semibold))
+                    Text("What Phosphor last observed for this backup.")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            ScrollView {
+                Text(text)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+            }
+            .frame(minHeight: 160, maxHeight: 360)
+            .background(Color.secondary.opacity(0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            HStack {
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+                Spacer()
+                Button("Done") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(width: 560)
+    }
+}
+
 struct BackupRow: View {
     let backup: BackupInfo
     var activity: BackupViewModel.BackupActivity?
@@ -867,6 +934,7 @@ struct BackupRow: View {
     let onDelete: () -> Void
     let onResume: () -> Void
     let onPause: () -> Void
+    var onDiagnose: () -> Void = {}
     @State private var isExporting = false
 
     private var isActive: Bool { activity?.isActive == true }
@@ -1011,7 +1079,10 @@ struct BackupRow: View {
                             .buttonStyle(.borderedProminent)
                             .tint(.orange)
                             .controlSize(.small)
-                            .help("No progress for 5+ minutes - resume this backup")
+                            .help("No progress for 5+ minutes - restarts this backup from saved progress")
+                        Button("Diagnose…") { onDiagnose() }
+                            .controlSize(.small)
+                            .help("Show why this backup stalled")
                     } else {
                         Button("Pause & Save", action: onPause)
                             .buttonStyle(.bordered)
