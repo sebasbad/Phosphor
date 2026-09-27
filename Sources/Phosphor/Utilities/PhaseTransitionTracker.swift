@@ -42,19 +42,41 @@ final class PhaseTransitionTracker: @unchecked Sendable {
         _transitions
     }
 
-    /// Get duration stats for a phase
+    /// Duration stats for a phase, derived from the recorded transitions.
+    ///
+    /// Each transition carries the time spent in its `from` phase, so summing
+    /// those is the real per-phase total. Sampling elapsed-since-phase-start
+    /// repeatedly and summing that (which the metrics collector did) counts
+    /// every prior second of the phase again on each sample.
     func durationStats(for phase: String) -> PhaseDurationStats? {
-        nil
+        let matches = _transitions.filter { $0.from.rawValue == phase && $0.duration != nil }
+        let durations = matches.compactMap(\.duration)
+        guard !durations.isEmpty else { return nil }
+        let total = durations.reduce(0, +)
+        return PhaseDurationStats(
+            phase: phase,
+            totalDuration: total,
+            transitionCount: durations.count,
+            averageDuration: total / Double(durations.count),
+            minDuration: durations.min(),
+            maxDuration: durations.max(),
+            lastOccurrence: matches.last?.timestamp
+        )
     }
 
     /// Get all phase durations
     var allPhaseDurations: [String: TimeInterval] {
-        [:]
+        var result: [String: TimeInterval] = [:]
+        for transition in _transitions {
+            guard let duration = transition.duration else { continue }
+            result[transition.from.rawValue, default: 0] += duration
+        }
+        return result
     }
 
     /// Get total backup duration
     var totalDuration: TimeInterval {
-        0
+        _transitions.compactMap(\.duration).reduce(0, +)
     }
 
     /// Reset tracker for new backup session

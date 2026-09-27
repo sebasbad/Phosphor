@@ -586,6 +586,14 @@ final class BackupViewModel: ObservableObject {
                     lines.append("  \(transition.from.displayName) -> \(transition.to.displayName) at \(transition.timestamp.formatted(date: .omitted, time: .standard))\(duration)")
                 }
             }
+            if !snapshot.phaseDurations.isEmpty {
+                lines.append("")
+                lines.append("Time per phase:")
+                for (phase, seconds) in snapshot.phaseDurations.sorted(by: { $0.value > $1.value }) {
+                    let name = BackupPhase(rawValue: phase)?.displayName ?? phase
+                    lines.append("  \(name): \(PhaseDetail.formatDuration(seconds))")
+                }
+            }
             let stats = snapshot.throughputStats
             if stats.samplesCount > 0 {
                 lines.append("")
