@@ -128,14 +128,9 @@ final class BackupObservabilityCoordinator: ObservableObject {
             totalFiles: totalFiles,
             currentFile: currentFile,
             phaseDetail: buildPhaseDetail(
-                isFinalizing: isFinalizing,
                 finalizationMetrics: finalizationMetrics,
-                isResume: false,
                 bytesTransferred: bytesTransferred,
-                totalBytes: totalBytes,
-                filesTransferred: filesTransferred,
-                totalFiles: totalFiles,
-                currentFile: currentFile
+                totalBytes: totalBytes
             )
         )
 
@@ -189,6 +184,7 @@ final class BackupObservabilityCoordinator: ObservableObject {
             throughputStats: throughputStats,
             predictiveETA: predictiveETA,
             phaseTransitions: phaseTransitions,
+            phaseDurations: phaseTracker.allPhaseDurations,
             throughputHistory: throughputHistory.allSamples,
             isStalled: isStalled,
             isProcessAlive: isProcessAlive,
@@ -240,44 +236,31 @@ final class BackupObservabilityCoordinator: ObservableObject {
         logger.info("Phase transition: \(self.currentPhase.displayName) → \(newPhase.displayName)\(duration.map { " (\(Self.formatDuration($0)))" } ?? "")")
     }
 
+    /// Detail for the current phase, using only data the coordinator actually
+    /// has. It previously returned zero-filled cases for every phase, so a full
+    /// backup announced "0 bytes of 0 bytes" in the row and to VoiceOver.
+    /// Returning nil falls back to the phase name, which is honest.
     private func buildPhaseDetail(
-        isFinalizing: Bool,
         finalizationMetrics: FinalizationProgressTracker.Metrics?,
-        isResume: Bool,
         bytesTransferred: Int64?,
-        totalBytes: Int64?,
-        filesTransferred: Int?,
-        totalFiles: Int?,
-        currentFile: String?
+        totalBytes: Int64?
     ) -> PhaseDetail? {
         switch currentPhase {
-        case .sanitization:
-            return .sanitization(filesScanned: 0, filesCleaned: 0, walCheckpointed: false)
-        case .incrementalResume:
-            return .incrementalResume(filesResumed: 0, filesRemaining: 0, baselineFraction: 0)
         case .fullBackup:
-            return .fullBackup(bytesTransferred: 0, totalBytes: 0, currentDomain: nil)
-        case .fallbackIdevicebackup2:
-            return .fallbackIdevicebackup2(reason: "Fallback initiated")
+            // Sizes come from the parsed tqdm progress line.
+            guard let bytesTransferred, let totalBytes, totalBytes > 0 else { return nil }
+            return .fullBackup(bytesTransferred: bytesTransferred, totalBytes: totalBytes, currentDomain: nil)
         case .finalization:
-            if let metrics = finalizationMetrics {
-                return .finalization(filesMoved: metrics.filesMoved, totalFiles: metrics.totalFiles, currentStage: "\(metrics.stage)")
-            }
-            return .finalization(filesMoved: 0, totalFiles: 0, currentStage: "Starting")
+            guard let metrics = finalizationMetrics else { return nil }
+            return .finalization(filesMoved: metrics.filesMoved, totalFiles: metrics.totalFiles, currentStage: "\(metrics.stage)")
         case .verification:
-            if let metrics = finalizationMetrics {
-                if case .verifying(let scanned, let total) = metrics.stage {
-                    return .verification(bucketsScanned: scanned, totalBuckets: total, currentBucket: nil)
-                }
-            }
-            return .verification(bucketsScanned: 0, totalBuckets: 256, currentBucket: nil)
-        case .completed:
-            return .completed(totalBytes: 0, totalFiles: 0, duration: 0)
-        case .failed:
-            return .failed(error: "Unknown error")
-        case .cancelled:
-            return .cancelled(savedProgress: 0)
-        default:
+            guard let metrics = finalizationMetrics,
+                  case .verifying(let scanned, let total) = metrics.stage else { return nil }
+            return .verification(bucketsScanned: scanned, totalBuckets: total, currentBucket: nil)
+        case .sanitization, .incrementalResume, .fallbackIdevicebackup2,
+             .completed, .failed, .cancelled, .detecting:
+            // No real counts are plumbed out of these paths yet; the phase name
+            // is shown instead of invented numbers.
             return nil
         }
     }
@@ -342,6 +325,8 @@ struct BackupObservabilitySnapshot: Codable, Sendable {
     let throughputStats: ThroughputHistory.ThroughputStats
     let predictiveETA: ThroughputHistory.PredictiveETA?
     let phaseTransitions: [PhaseTransitionRecord]
+    /// Real elapsed time per phase, summed from the transition timeline.
+    let phaseDurations: [String: TimeInterval]
     let throughputHistory: [ThroughputHistory.VelocitySample]
     let isStalled: Bool
     let isProcessAlive: Bool
