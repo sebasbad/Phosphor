@@ -14,6 +14,8 @@ struct DeviceOverviewView: View {
     @State private var pendingBackupDevice: DeviceInfo?
     @State private var showNonResumableCancelConfirm = false
     @State private var pendingCancelDeviceID: String?
+    @State private var pendingIncompleteBackupIssue: BackupManager.BackupFailure?
+    @State private var showIncompleteBackupTrashConfirm = false
     var onShowPreflight: ((DeviceInfo) -> Void)? = nil
 
     var body: some View {
@@ -50,10 +52,34 @@ struct DeviceOverviewView: View {
         } message: {
             Text(backupVM.alertMessage)
         }
-        .alert("Backup Issue", isPresented: backupIssuePresented) {
-            Button("OK", role: .cancel) { backupVM.backupIssue = nil }
+        .sheet(item: $backupVM.backupIssue) { issue in
+            BackupIssueSheet(
+                issue: issue,
+                primaryActionTitle: backupIssueActionTitle(for: issue),
+                primaryAction: { handleBackupIssueAction(issue) },
+                secondaryActionTitle: issue.recoveryAction == .resumeBackup ? "Delete & Start Fresh" : nil,
+                secondaryAction: issue.recoveryAction == .resumeBackup ? {
+                    pendingIncompleteBackupIssue = issue
+                    backupVM.backupIssue = nil
+                    showIncompleteBackupTrashConfirm = true
+                } : nil,
+                dismiss: { backupVM.backupIssue = nil }
+            )
+        }
+        .confirmationDialog(
+            "Move Incomplete Backup to Trash?",
+            isPresented: $showIncompleteBackupTrashConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Move to Trash & Run Full Backup", role: .destructive) {
+                if let issue = pendingIncompleteBackupIssue {
+                    Task { await backupVM.deleteIncompleteBackupAndRunFull(for: issue) }
+                }
+                pendingIncompleteBackupIssue = nil
+            }
+            Button("Cancel", role: .cancel) { pendingIncompleteBackupIssue = nil }
         } message: {
-            Text(backupVM.backupIssue.map { "\($0.title)\n\n\($0.message)" } ?? "Backup failed")
+            Text("The incomplete backup folder will be moved to the Trash. The device needs to be unlocked and connected over USB for the full backup to succeed.")
         }
         .alert("Full Wi-Fi Backup?", isPresented: $showFullWiFiBackupConfirm) {
             Button("Run Full Wi-Fi Backup") {
@@ -81,11 +107,38 @@ struct DeviceOverviewView: View {
         }
     }
 
-    private var backupIssuePresented: Binding<Bool> {
-        Binding(
-            get: { backupVM.backupIssue != nil },
-            set: { if !$0 { backupVM.backupIssue = nil } }
-        )
+    private func backupIssueActionTitle(for issue: BackupManager.BackupFailure) -> String? {
+        switch issue.recoveryAction {
+        case .resumeBackup: return "Resume Backup"
+        case .runFullBackup: return "Run Full Backup"
+        case .deleteIncompleteAndRunFull: return "Delete Incomplete Backup & Run Full"
+        case .openBackupSettings: return "Open Backup Settings"
+        case .retry: return "Retry"
+        case .none: return nil
+        }
+    }
+
+    private func handleBackupIssueAction(_ issue: BackupManager.BackupFailure) {
+        switch issue.recoveryAction {
+        case .resumeBackup:
+            backupVM.backupIssue = nil
+            Task { await backupVM.resumeBackup(for: issue) }
+        case .runFullBackup:
+            backupVM.backupIssue = nil
+            Task { await backupVM.runFullBackup(for: issue) }
+        case .deleteIncompleteAndRunFull:
+            pendingIncompleteBackupIssue = issue
+            backupVM.backupIssue = nil
+            showIncompleteBackupTrashConfirm = true
+        case .openBackupSettings:
+            backupVM.backupIssue = nil
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        case .retry:
+            backupVM.backupIssue = nil
+            Task { await backupVM.retryBackup(for: issue) }
+        case .none:
+            backupVM.backupIssue = nil
+        }
     }
 
     private var noDeviceView: some View {
