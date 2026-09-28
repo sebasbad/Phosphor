@@ -177,6 +177,13 @@ final class BackupViewModel: ObservableObject {
             return Date().timeIntervalSince(lastProgressUpdate) > 300 // 5 minutes without progress
         }
 
+        var isQuiet: Bool {
+            guard transition == nil else { return false }
+            guard case .running = state else { return false }
+            let interval = Date().timeIntervalSince(lastProgressUpdate)
+            return interval > 30 && interval <= 300 // 30 seconds quiet, not yet stalled
+        }
+
         var displayProgressText: String {
             switch state {
             case .queued(let position): return "Queued · #\(position)"
@@ -226,21 +233,25 @@ final class BackupViewModel: ObservableObject {
                     let pct = Int(displayProgressFraction * 100)
                     components.append("Backing up \(pct)%")
                 }
-                if !isFinalizing {
-                    if let speed, !speed.isEmpty {
-                        components.append(speed)
+                if isQuiet {
+                    components.append("Waiting for device…")
+                } else {
+                    if !isFinalizing {
+                        if let speed, !speed.isEmpty {
+                            components.append(speed)
+                        }
+                        if let eta, !eta.isEmpty {
+                            components.append("ETA: \(eta)")
+                        }
                     }
-                    if let eta, !eta.isEmpty {
-                        components.append("ETA: \(eta)")
+                    // Add predictive ETA if available
+                    if let predictiveETA = predictiveETA, predictiveETA.confidence != .none {
+                        components.append("Predicted: \(predictiveETA.formattedETA) (\(predictiveETA.confidence.rawValue))")
                     }
-                }
-                // Add predictive ETA if available
-                if let predictiveETA = predictiveETA, predictiveETA.confidence != .none {
-                    components.append("Predicted: \(predictiveETA.formattedETA) (\(predictiveETA.confidence.rawValue))")
-                }
-                // Add throughput trend
-                if throughputTrend != .insufficient {
-                    components.append("Trend: \(throughputTrend.description)")
+                    // Add throughput trend
+                    if throughputTrend != .insufficient {
+                        components.append("Trend: \(throughputTrend.description)")
+                    }
                 }
                 return components.joined(separator: " · ")
             case .completed: return "Completed"
@@ -576,6 +587,7 @@ final class BackupViewModel: ObservableObject {
         }
         lines.append("Last progress update: \(Int(Date().timeIntervalSince(activity.lastProgressUpdate)))s ago")
         lines.append("Stalled (no progress for 5+ min): \(activity.isStalled ? "yes" : "no")")
+        lines.append("Quiet (waiting for device >30s): \(activity.isQuiet ? "yes" : "no")")
         if let speed = activity.speed { lines.append("Last speed: \(speed)") }
         if let eta = activity.eta { lines.append("Last ETA: \(eta)") }
         if let error = activity.errorMessage { lines.append("Error: \(error)") }

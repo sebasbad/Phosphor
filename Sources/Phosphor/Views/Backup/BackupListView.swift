@@ -746,9 +746,9 @@ struct BackupListView: View {
                                 total: 1.0
                             )
                             .progressViewStyle(.linear)
-                            .tint(activity.isAwaitingPasscode ? .orange : .brandAccent)
+                            .tint(activity.isAwaitingPasscode ? .orange : (activity.isQuiet ? .secondary : .brandAccent))
 
-                            Text(activity.isFinalizing ? (activity.finalizationMetrics != nil ? "Reorganizing files from snapshot onto disk. Do not disconnect." : "Consolidating files and sealing backup manifest on disk...") : "Progress is saved automatically. You can stop or unplug and resume later.")
+                            Text(activity.isFinalizing ? (activity.finalizationMetrics != nil ? "Reorganizing files from snapshot onto disk. Do not disconnect." : "Consolidating files and sealing backup manifest on disk...") : (activity.isQuiet ? "Waiting for device response…" : "Progress is saved automatically. You can stop or unplug and resume later."))
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
                         }
@@ -946,6 +946,7 @@ struct BackupRow: View {
 
     private var isActive: Bool { activity?.isActive == true }
     private var isStalled: Bool { activity?.isStalled == true }
+    private var isQuiet: Bool { activity?.isQuiet == true }
     private var isBusy: Bool { activity?.isBusy == true }
 
     /// Progress for a backup running inside this row. The row keeps its identity
@@ -956,12 +957,12 @@ struct BackupRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 ProgressView(value: activity.displayProgressFraction, total: 1.0)
                     .progressViewStyle(.linear)
-                    .tint(isStalled ? .orange : .brandAccent)
+                    .tint(isStalled ? .orange : (isQuiet ? .secondary : .brandAccent))
 
             HStack(spacing: 6) {
-                Text(isStalled ? "Stalled - no progress for 5+ min" : activity.progressText)
+                Text(isStalled ? "Stalled - no progress for 5+ min" : (isQuiet ? "Waiting for device… (\(activity.progressText))" : activity.progressText))
                     .font(.system(size: 10))
-                    .foregroundStyle(isStalled ? Color.orange : .secondary)
+                    .foregroundStyle(isStalled ? Color.orange : (isQuiet ? Color.secondary : Color.secondary))
                     .lineLimit(1)
                 if let speed = activity.speed {
                     Text("- \(speed)")
