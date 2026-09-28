@@ -214,3 +214,23 @@ def test_eta_string_parser_matches_finalized_format(root: Path) -> None:
     assert parse_eta("5m 21s") == 321
     assert parse_eta("1h 2m 3s") == 3723
     assert parse_eta("0m 0s") == 0, "zero ETA must be treated as unknown"
+
+
+def test_two_threshold_liveness_distinguishes_quiet_from_stalled(root: Path) -> None:
+    """A backup that pauses for ~30s is quiet (waiting on device); at 5m it is stalled.
+    The UI distinguishes quiet from stalled without false alarms."""
+    coord = read(root, "Sources/Phosphor/Utilities/BackupObservabilityCoordinator.swift")
+    model = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+    view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+
+    assert "@Published var isQuiet = false" in coord, "coordinator must publish isQuiet"
+    assert "isQuiet = staleInterval > 30 && !isStalled" in coord, "coordinator must calculate isQuiet threshold"
+    assert "let isQuiet: Bool" in coord, "snapshot must carry isQuiet"
+
+    assert "var isQuiet: Bool" in model, "BackupActivity must define isQuiet"
+    assert "interval > 30 && interval <= 300" in model, "isQuiet must use 30s-300s window"
+    assert "Waiting for device…" in model, "displayProgressText must show waiting state when quiet"
+
+    assert "private var isQuiet: Bool { activity?.isQuiet == true }" in view, "row must observe isQuiet"
+    assert "isQuiet ? .secondary : .brandAccent" in view, "row must adapt tint for quiet state"
+
