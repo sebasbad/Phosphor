@@ -14,6 +14,7 @@ final class BackupObservabilityCoordinator: ObservableObject {
     @Published var predictiveETA: ThroughputHistory.PredictiveETA?
     @Published var phaseTransitions: [PhaseTransitionRecord] = []
     @Published var isStalled = false
+    @Published var isQuiet = false
     @Published var isProcessAlive = true
     @Published var throughputTrend: ThroughputHistory.ThroughputTrend = .insufficient
 
@@ -76,6 +77,7 @@ final class BackupObservabilityCoordinator: ObservableObject {
         lastProgressUpdate = Date()
         processAlive = true
         isStalled = false
+        isQuiet = false
         isProcessAlive = true
 
         // Start phase
@@ -189,6 +191,7 @@ final class BackupObservabilityCoordinator: ObservableObject {
             phaseDurations: phaseTracker.allPhaseDurations,
             throughputHistory: throughputHistory.allSamples,
             isStalled: isStalled,
+            isQuiet: isQuiet,
             isProcessAlive: isProcessAlive,
             throughputTrend: throughputTrend
         )
@@ -286,13 +289,9 @@ final class BackupObservabilityCoordinator: ObservableObject {
     }
 
     private func updateStallDetection() {
-        guard let lastUpdate = lastSizeUpdate else {
-            isStalled = false
-            return
-        }
-
-        let staleInterval = Date().timeIntervalSince(lastUpdate)
+        let staleInterval = Date().timeIntervalSince(lastProgressUpdate)
         isStalled = staleInterval > 300 // 5 minutes
+        isQuiet = staleInterval > 30 && !isStalled // 30 seconds quiet
     }
 
     private func updateProcessLiveness() {
@@ -336,6 +335,7 @@ struct BackupObservabilitySnapshot: Codable, Sendable {
     let phaseDurations: [String: TimeInterval]
     let throughputHistory: [ThroughputHistory.VelocitySample]
     let isStalled: Bool
+    let isQuiet: Bool
     let isProcessAlive: Bool
     let throughputTrend: ThroughputHistory.ThroughputTrend
 }
