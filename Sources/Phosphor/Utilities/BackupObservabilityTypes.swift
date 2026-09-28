@@ -178,13 +178,17 @@ public struct BackupFailure: Codable, Sendable {
     }
 }
 
-/// Real per-phase observations the coordinator cannot derive from tool output:
-/// they are assembled where the data lives (the view model) and handed over as
-/// one value instead of widening `updateMetrics` further. A nil field means
-/// "unknown", never zero.
 public struct PhaseContext: Sendable {
     public var filesResumed: Int?
     public var resumeBaselineFraction: Double?
+    public var sanitizationScanned: Int?
+    public var sanitizationCleaned: Int?
+    public var sanitizationWalCheckpointed: Bool?
+    public var fallbackReason: String?
+    public var currentDomain: String?
+    public var terminalBytes: Int64?
+    public var terminalFiles: Int?
+    public var terminalDuration: TimeInterval?
 
     public init() {}
 }

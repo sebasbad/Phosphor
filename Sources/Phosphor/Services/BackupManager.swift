@@ -632,44 +632,62 @@ final class BackupManager: ObservableObject {
     /// Sanitize an interrupted backup folder before resuming to prevent com.apple.mobilebackup2
     /// and idevicebackup2 / pymobiledevice3 from failing with MBErrorDomain/205 ("cannot parse null plist").
     /// - Checks and cleans up 0-byte or corrupted plist stubs (Status.plist, Info.plist).
+    struct SanitizeResult: Sendable, Equatable {
+        let filesScanned: Int
+        let filesCleaned: Int
+        let walCheckpointed: Bool
+    }
+
+    /// Sanitize an interrupted backup folder before resuming to prevent com.apple.mobilebackup2
+    /// and idevicebackup2 / pymobiledevice3 from failing with MBErrorDomain/205 ("cannot parse null plist").
+    /// - Checks and cleans up 0-byte or corrupted plist stubs (Status.plist, Info.plist).
     /// - Performs SQLite WAL checkpoint and removes stale lock files (Manifest.db-wal, Manifest.db-shm).
     /// - Removes transient staging or temp files.
     @discardableResult
-    static func sanitizeIncompleteBackup(at path: String) -> Bool {
+    static func sanitizeIncompleteBackup(at path: String) -> SanitizeResult {
         let fm = FileManager.default
         var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return false }
+        guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else {
+            return SanitizeResult(filesScanned: 0, filesCleaned: 0, walCheckpointed: false)
+        }
+
+        var scanned = 0
+        var cleaned = 0
+        var walCheckpointed = false
 
         // 1. Remove 0-byte or unparseable Status.plist so mobilebackup2 starts a clean phase
         let statusPath = (path as NSString).appendingPathComponent("Status.plist")
         if fm.fileExists(atPath: statusPath) {
+            scanned += 1
             if !isNonEmptyFile(statusPath) {
-                try? fm.removeItem(atPath: statusPath)
+                if (try? fm.removeItem(atPath: statusPath)) != nil { cleaned += 1 }
             } else if let data = try? Data(contentsOf: URL(fileURLWithPath: statusPath)),
                       (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) == nil {
-                try? fm.removeItem(atPath: statusPath)
+                if (try? fm.removeItem(atPath: statusPath)) != nil { cleaned += 1 }
             }
         }
 
         // 2. Remove 0-byte Info.plist if unparseable
         let infoPath = (path as NSString).appendingPathComponent("Info.plist")
         if fm.fileExists(atPath: infoPath) {
+            scanned += 1
             if !isNonEmptyFile(infoPath) {
-                try? fm.removeItem(atPath: infoPath)
+                if (try? fm.removeItem(atPath: infoPath)) != nil { cleaned += 1 }
             } else if let data = try? Data(contentsOf: URL(fileURLWithPath: infoPath)),
                       (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) == nil {
-                try? fm.removeItem(atPath: infoPath)
+                if (try? fm.removeItem(atPath: infoPath)) != nil { cleaned += 1 }
             }
         }
 
         // 3. Remove 0-byte Manifest.plist if unparseable
         let manifestPlistPath = (path as NSString).appendingPathComponent("Manifest.plist")
         if fm.fileExists(atPath: manifestPlistPath) {
+            scanned += 1
             if !isNonEmptyFile(manifestPlistPath) {
-                try? fm.removeItem(atPath: manifestPlistPath)
+                if (try? fm.removeItem(atPath: manifestPlistPath)) != nil { cleaned += 1 }
             } else if let data = try? Data(contentsOf: URL(fileURLWithPath: manifestPlistPath)),
                       (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) == nil {
-                try? fm.removeItem(atPath: manifestPlistPath)
+                if (try? fm.removeItem(atPath: manifestPlistPath)) != nil { cleaned += 1 }
             }
         }
 
@@ -678,38 +696,52 @@ final class BackupManager: ObservableObject {
         let walPath = (path as NSString).appendingPathComponent("Manifest.db-wal")
         let shmPath = (path as NSString).appendingPathComponent("Manifest.db-shm")
         if fm.fileExists(atPath: manifestDbPath) && isNonEmptyFile(manifestDbPath) {
+            scanned += 1
             if fm.fileExists(atPath: walPath) || fm.fileExists(atPath: shmPath) {
+                scanned += (fm.fileExists(atPath: walPath) ? 1 : 0) + (fm.fileExists(atPath: shmPath) ? 1 : 0)
                 // Execute a quick truncate checkpoint if possible via sqlite3
                 var dbPointer: OpaquePointer?
                 if sqlite3_open(manifestDbPath, &dbPointer) == SQLITE_OK, let db = dbPointer {
                     var logFrames: Int32 = 0
                     var ckptFrames: Int32 = 0
-                    sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, &logFrames, &ckptFrames)
+                    if sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, &logFrames, &ckptFrames) == SQLITE_OK {
+                        walCheckpointed = true
+                    }
                     sqlite3_close(db)
                 }
                 // If WAL is still 0-bytes or leftover, remove it
                 if fm.fileExists(atPath: walPath) && !isNonEmptyFile(walPath) {
-                    try? fm.removeItem(atPath: walPath)
+                    if (try? fm.removeItem(atPath: walPath)) != nil { cleaned += 1 }
                 }
                 if fm.fileExists(atPath: shmPath) && !isNonEmptyFile(shmPath) {
-                    try? fm.removeItem(atPath: shmPath)
+                    if (try? fm.removeItem(atPath: shmPath)) != nil { cleaned += 1 }
                 }
             }
         } else if fm.fileExists(atPath: manifestDbPath) && !isNonEmptyFile(manifestDbPath) {
+            scanned += 1
             // A zero-byte Manifest.db will cause sqlite3 / mobilebackup2 to fail
-            try? fm.removeItem(atPath: manifestDbPath)
-            if fm.fileExists(atPath: walPath) { try? fm.removeItem(atPath: walPath) }
-            if fm.fileExists(atPath: shmPath) { try? fm.removeItem(atPath: shmPath) }
+            if (try? fm.removeItem(atPath: manifestDbPath)) != nil { cleaned += 1 }
+            if fm.fileExists(atPath: walPath) {
+                scanned += 1
+                if (try? fm.removeItem(atPath: walPath)) != nil { cleaned += 1 }
+            }
+            if fm.fileExists(atPath: shmPath) {
+                scanned += 1
+                if (try? fm.removeItem(atPath: shmPath)) != nil { cleaned += 1 }
+            }
         }
 
         // 5. Clean up leftover temporary/partial download files (.tmp, .staging)
         if let entries = try? fm.contentsOfDirectory(atPath: path) {
             for entry in entries where entry.hasSuffix(".tmp") || entry.hasSuffix(".staging") {
-                try? fm.removeItem(atPath: (path as NSString).appendingPathComponent(entry))
+                scanned += 1
+                if (try? fm.removeItem(atPath: (path as NSString).appendingPathComponent(entry))) != nil {
+                    cleaned += 1
+                }
             }
         }
 
-        return true
+        return SanitizeResult(filesScanned: scanned, filesCleaned: cleaned, walCheckpointed: walCheckpointed)
     }
 
     // MARK: - Backup Creation
@@ -885,8 +917,9 @@ final class BackupManager: ObservableObject {
         }
 
         // Fallback: idevicebackup2
+        let fallbackReason = pymobiledeviceStderr.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n").last ?? "pymobiledevice3 failed"
+        onProgress("Fallback: \(fallbackReason)")
         backupProgress = "Backing up..."
-        onProgress("Backing up")
 
         let args = idevicebackupArguments(udid: udid, directory: backupRoot, full: true, preferNetwork: preferNetwork)
         var idevicebackupStderr = ""
@@ -1205,6 +1238,8 @@ final class BackupManager: ObservableObject {
         var idevicebackupStderr = ""
 
         // Fallback: idevicebackup2
+        let fallbackReason = pymobiledeviceStderr.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n").last ?? "pymobiledevice3 failed"
+        onProgress("Fallback: \(fallbackReason)")
         return await withCheckedContinuation { continuation in
             guard !operationWasCancelled(operationID) else {
                 markOperationCancelled(operationID)
@@ -1307,7 +1342,8 @@ final class BackupManager: ObservableObject {
 
         let targetPath = Self.backupPath(for: udid, in: backupRoot)
         // Perform pre-resume sanitization to remove 0-byte/corrupted plists and checkpoint SQLite WAL.
-        Self.sanitizeIncompleteBackup(at: targetPath)
+        let sanitizeResult = Self.sanitizeIncompleteBackup(at: targetPath)
+        onProgress("Sanitizing: \(sanitizeResult.filesScanned) scanned, \(sanitizeResult.filesCleaned) cleaned, wal: \(sanitizeResult.walCheckpointed)")
 
         if operationWasCancelled(operationID) {
             markOperationCancelled(operationID)
@@ -1337,6 +1373,8 @@ final class BackupManager: ObservableObject {
         }
 
         let pymobiledeviceStderr = pymobiledeviceStderrTail.joined(separator: "\n")
+        let fallbackReason = pymobiledeviceStderr.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n").last ?? "pymobiledevice3 failed"
+        onProgress("Fallback: \(fallbackReason)")
 
         // Fallback: idevicebackup2 without --full flag
         let args = idevicebackupArguments(udid: udid, directory: backupRoot, full: false, preferNetwork: preferNetwork)

@@ -119,8 +119,17 @@ final class BackupViewModel: ObservableObject {
         enum Transition: Equatable { case pausing, restarting }
         var transition: Transition?
         var isBusy: Bool { transition != nil }
+        /// Explicit phase override set by progress signals (sanitization, fallback, terminal).
+        var explicitPhase: BackupPhase?
+        var sanitizationScanned: Int?
+        var sanitizationCleaned: Int?
+        var sanitizationWalCheckpointed: Bool?
+        var fallbackReason: String?
+        var startTime: Date = Date()
+        var terminalPhaseDetail: PhaseDetail?
 
         var observabilityPhase: BackupPhase {
+            if let explicitPhase { return explicitPhase }
             if isFinalizing { return .finalization }
             if isResume { return .incrementalResume }
             return .fullBackup
@@ -254,7 +263,11 @@ final class BackupViewModel: ObservableObject {
                     }
                 }
                 return components.joined(separator: " · ")
-            case .completed: return "Completed"
+            case .completed:
+                if let terminalPhaseDetail {
+                    return terminalPhaseDetail.description
+                }
+                return "Completed"
             case .failed: return "Failed"
             case .cancelled: return "Cancelled"
             }
@@ -726,10 +739,44 @@ final class BackupViewModel: ObservableObject {
         }
 
         if success {
+            let duration = Date().timeIntervalSince(activity(for: udid)?.startTime ?? Date())
+            let finalStats = await Task.detached(priority: .utility) {
+                BackupManager.incompleteBackupStats(for: udid)
+            }.value
+            let totalBytes = Int64(finalStats?.totalBytes ?? 0)
+            let totalFiles = finalStats?.fileCount ?? 0
+            let completedDetail = (totalBytes > 0 && totalFiles > 0)
+                ? PhaseDetail.completed(totalBytes: totalBytes, totalFiles: totalFiles, duration: duration)
+                : nil
+
             updateActivity(udid: udid) {
                 $0.state = .completed
                 $0.progressText = "Completed"
                 $0.progressFraction = 1
+                $0.explicitPhase = .completed
+                $0.terminalPhaseDetail = completedDetail
+                if let coordinator = $0.observabilityCoordinator {
+                    var context = PhaseContext()
+                    context.terminalBytes = totalBytes > 0 ? totalBytes : nil
+                    context.terminalFiles = totalFiles > 0 ? totalFiles : nil
+                    context.terminalDuration = duration
+                    coordinator.updateMetrics(
+                        phase: .completed,
+                        progressFraction: 1.0,
+                        bytesTransferred: totalBytes > 0 ? totalBytes : nil,
+                        filesTransferred: totalFiles > 0 ? totalFiles : nil,
+                        totalBytes: totalBytes > 0 ? totalBytes : nil,
+                        totalFiles: totalFiles > 0 ? totalFiles : nil,
+                        currentFile: nil,
+                        speedBytesPerSec: nil,
+                        speedFilesPerSec: nil,
+                        eta: nil,
+                        isFinalizing: false,
+                        finalizationMetrics: nil,
+                        context: context
+                    )
+                    $0.phaseMetrics = coordinator.phaseMetrics
+                }
             }
             loadBackups()
         } else if manager.lastOperationWasCancelled {
@@ -883,7 +930,9 @@ final class BackupViewModel: ObservableObject {
             if awaitingPasscode {
                 activity.isAwaitingPasscode = true
             }
+            var parsedProgress = false
             if let details = PyMobileDevice.parseProgressDetails(from: text) {
+                parsedProgress = true
                 // If we receive active transfer speed or progress, user has completed unlocking
                 if details.speed != nil || details.fraction > 0.001 {
                     activity.isAwaitingPasscode = false
@@ -900,6 +949,7 @@ final class BackupViewModel: ObservableObject {
                 if let t = details.transferred { transferredBytes = Self.parseByteCount(t) }
                 if let t = details.total { totalBytes = Self.parseByteCount(t) }
             } else if let pct = PyMobileDevice.parseProgress(from: text) {
+                parsedProgress = true
                 if pct > 0.001 {
                     activity.isAwaitingPasscode = false
                 }
@@ -910,9 +960,29 @@ final class BackupViewModel: ObservableObject {
                     activity.progressFraction = max(current, pct)
                 }
             } else if manager.backupPercent > 0 {
+                parsedProgress = true
                 activity.isAwaitingPasscode = false
                 let current = activity.progressFraction ?? 0.0
                 activity.progressFraction = max(current, manager.backupPercent)
+            }
+
+            // Detect phase signals emitted by BackupManager
+            if text.hasPrefix("Sanitizing:") {
+                activity.explicitPhase = .sanitization
+                // Format: "Sanitizing: <scanned> scanned, <cleaned> cleaned, wal: <wal>"
+                if let regex = try? NSRegularExpression(pattern: #"Sanitizing:\s*(\d+)\s*scanned,\s*(\d+)\s*cleaned,\s*wal:\s*(true|false)"#) {
+                    if let m = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) {
+                        if let r1 = Range(m.range(at: 1), in: text), let s = Int(text[r1]) { activity.sanitizationScanned = s }
+                        if let r2 = Range(m.range(at: 2), in: text), let c = Int(text[r2]) { activity.sanitizationCleaned = c }
+                        if let r3 = Range(m.range(at: 3), in: text) { activity.sanitizationWalCheckpointed = text[r3] == "true" }
+                    }
+                }
+            } else if text.hasPrefix("Fallback:") {
+                activity.explicitPhase = .fallbackIdevicebackup2
+                let reason = String(text.dropFirst("Fallback:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !reason.isEmpty { activity.fallbackReason = reason }
+            } else if activity.explicitPhase == .sanitization && (parsedProgress || text.contains("Resuming")) {
+                activity.explicitPhase = nil
             }
 
             if activity.isFinalizing {
@@ -937,6 +1007,10 @@ final class BackupViewModel: ObservableObject {
                         var context = PhaseContext()
                         context.filesResumed = activity.resumeFileBaseline
                         context.resumeBaselineFraction = activity.resumeBaselineFraction > 0 ? activity.resumeBaselineFraction : nil
+                        context.sanitizationScanned = activity.sanitizationScanned
+                        context.sanitizationCleaned = activity.sanitizationCleaned
+                        context.sanitizationWalCheckpointed = activity.sanitizationWalCheckpointed
+                        context.fallbackReason = activity.fallbackReason
                         return context
                     }()
                 )

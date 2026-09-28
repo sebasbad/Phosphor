@@ -255,11 +255,19 @@ final class BackupObservabilityCoordinator: ObservableObject {
         case .fullBackup:
             // Sizes come from the parsed tqdm progress line.
             guard let bytesTransferred, let totalBytes, totalBytes > 0 else { return nil }
-            return .fullBackup(bytesTransferred: bytesTransferred, totalBytes: totalBytes, currentDomain: nil)
+            return .fullBackup(bytesTransferred: bytesTransferred, totalBytes: totalBytes, currentDomain: context.currentDomain)
         case .incrementalResume:
             guard let filesResumed = context.filesResumed,
                   let baseline = context.resumeBaselineFraction else { return nil }
             return .incrementalResume(filesResumed: filesResumed, baselineFraction: baseline)
+        case .sanitization:
+            guard let scanned = context.sanitizationScanned,
+                  let cleaned = context.sanitizationCleaned,
+                  let wal = context.sanitizationWalCheckpointed else { return nil }
+            return .sanitization(filesScanned: scanned, filesCleaned: cleaned, walCheckpointed: wal)
+        case .fallbackIdevicebackup2:
+            guard let reason = context.fallbackReason, !reason.isEmpty else { return nil }
+            return .fallbackIdevicebackup2(reason: reason)
         case .finalization:
             guard let metrics = finalizationMetrics else { return nil }
             return .finalization(filesMoved: metrics.filesMoved, totalFiles: metrics.totalFiles, currentStage: "\(metrics.stage)")
@@ -267,10 +275,12 @@ final class BackupObservabilityCoordinator: ObservableObject {
             guard let metrics = finalizationMetrics,
                   case .verifying(let scanned, let total) = metrics.stage else { return nil }
             return .verification(bucketsScanned: scanned, totalBuckets: total, currentBucket: nil)
-        case .sanitization, .fallbackIdevicebackup2, .completed, .failed, .cancelled, .detecting:
-            // These phases are either not selected by observabilityPhase or have
-            // no data plumbed out of the manager yet. The phase name is shown
-            // rather than invented numbers.
+        case .completed:
+            guard let bytes = context.terminalBytes,
+                  let files = context.terminalFiles,
+                  let duration = context.terminalDuration else { return nil }
+            return .completed(totalBytes: bytes, totalFiles: files, duration: duration)
+        case .failed, .cancelled, .detecting:
             return nil
         }
     }
