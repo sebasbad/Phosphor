@@ -629,6 +629,43 @@ final class BackupManager: ObservableObject {
         return IncompleteBackupStats(fileCount: count, totalBytes: totalBytes, lastModified: latestDate)
     }
 
+    /// Samples the currently written domain by finding the most recently modified
+    /// file in the active backup directory and resolving its domain from Manifest.db.
+    /// Returns nil if no Manifest.db exists yet or if the file cannot be mapped.
+    nonisolated static func sampleActiveDomain(for udid: String, in directory: String? = nil) -> String? {
+        let fm = FileManager.default
+        let path = backupPath(for: udid, in: directory)
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
+
+        let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
+        let targetDir = fm.fileExists(atPath: snapshotPath, isDirectory: &isDir) && isDir.boolValue ? snapshotPath : path
+
+        guard let subdirs = try? fm.contentsOfDirectory(atPath: targetDir) else { return nil }
+        var newestFileID: String?
+        var newestDate: Date?
+
+        // Check a bounded set of recent entries without doing an exhaustive recursive walk
+        for sub in subdirs where sub.count == 2 {
+            let subPath = (targetDir as NSString).appendingPathComponent(sub)
+            guard let files = try? fm.contentsOfDirectory(atPath: subPath) else { continue }
+            for file in files {
+                let filePath = (subPath as NSString).appendingPathComponent(file)
+                if let attrs = try? fm.attributesOfItem(atPath: filePath),
+                   let mod = attrs[.modificationDate] as? Date {
+                    if newestDate == nil || mod > newestDate! {
+                        newestDate = mod
+                        newestFileID = file
+                    }
+                }
+            }
+        }
+
+        guard let fileID = newestFileID else { return nil }
+        guard let manifest = try? BackupManifest(backupPath: path) else { return nil }
+        return manifest.entry(withFileID: fileID)?.domain
+    }
+
     /// Sanitize an interrupted backup folder before resuming to prevent com.apple.mobilebackup2
     /// and idevicebackup2 / pymobiledevice3 from failing with MBErrorDomain/205 ("cannot parse null plist").
     /// - Checks and cleans up 0-byte or corrupted plist stubs (Status.plist, Info.plist).
