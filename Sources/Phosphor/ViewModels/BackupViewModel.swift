@@ -127,6 +127,7 @@ final class BackupViewModel: ObservableObject {
         var fallbackReason: String?
         var startTime: Date = Date()
         var terminalPhaseDetail: PhaseDetail?
+        var currentDomain: String?
 
         var observabilityPhase: BackupPhase {
             if let explicitPhase { return explicitPhase }
@@ -840,7 +841,13 @@ final class BackupViewModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 if Task.isCancelled { break }
                 guard let self else { return }
-                self.updateActivity(udid: udid) { $0.processAlive = true }
+                let domain = await Task.detached(priority: .utility) {
+                    BackupManager.sampleActiveDomain(for: udid)
+                }.value
+                self.updateActivity(udid: udid) {
+                    $0.processAlive = true
+                    if let domain { $0.currentDomain = domain }
+                }
                 self.refreshLegacyProgressState()
             }
         }
@@ -1011,6 +1018,7 @@ final class BackupViewModel: ObservableObject {
                         context.sanitizationCleaned = activity.sanitizationCleaned
                         context.sanitizationWalCheckpointed = activity.sanitizationWalCheckpointed
                         context.fallbackReason = activity.fallbackReason
+                        context.currentDomain = activity.currentDomain
                         return context
                     }()
                 )
