@@ -597,6 +597,23 @@ final class BackupManager: ObservableObject {
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
 
+        // Fast path: if Manifest.db is present and readable via SQLite, query count and total size in milliseconds
+        // instead of crawling hundreds of thousands of files across an external drive.
+        let manifestDbPath = (path as NSString).appendingPathComponent("Manifest.db")
+        if fm.fileExists(atPath: manifestDbPath),
+           let reader = try? SQLiteReader(path: manifestDbPath) {
+            let countQuery = "SELECT count(*) FROM Files WHERE flags = 1"
+            let rowCount: Int? = try? reader.scalar(countQuery)
+            if let rowCount, rowCount > 0 {
+                let modDate = (try? fm.attributesOfItem(atPath: manifestDbPath)[.modificationDate]) as? Date
+                // Try to get total file size if recorded, otherwise estimate ~100KB per file
+                let sizeQuery = "SELECT sum(length(file)) FROM Files WHERE flags = 1"
+                let metadataBytes: Int? = try? reader.scalar(sizeQuery)
+                let estimatedBytes = UInt64(metadataBytes ?? (rowCount * 100_000))
+                return IncompleteBackupStats(fileCount: rowCount, totalBytes: estimatedBytes, lastModified: modDate)
+            }
+        }
+
         let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
         let targetDir = fm.fileExists(atPath: snapshotPath, isDirectory: &isDir) && isDir.boolValue ? snapshotPath : path
 
@@ -606,10 +623,12 @@ final class BackupManager: ObservableObject {
 
         guard let subdirs = try? fm.contentsOfDirectory(atPath: targetDir) else { return nil }
         for sub in subdirs where sub.count == 2 || sub.count == 40 {
+            if Task.isCancelled { return nil }
             let subPath = (targetDir as NSString).appendingPathComponent(sub)
             if let files = try? fm.contentsOfDirectory(atPath: subPath) {
                 count += files.count
                 for file in files {
+                    if Task.isCancelled { return nil }
                     let filePath = (subPath as NSString).appendingPathComponent(file)
                     if let attrs = try? fm.attributesOfItem(atPath: filePath) {
                         if let size = attrs[.size] as? UInt64 {
@@ -645,11 +664,16 @@ final class BackupManager: ObservableObject {
         var newestFileID: String?
         var newestDate: Date?
 
-        // Check a bounded set of recent entries without doing an exhaustive recursive walk
+        // Check a bounded sample of recent entries without doing an exhaustive recursive walk
+        var sampledSubdirs = 0
         for sub in subdirs where sub.count == 2 {
+            if Task.isCancelled { return nil }
+            sampledSubdirs += 1
+            if sampledSubdirs > 10 { break }
             let subPath = (targetDir as NSString).appendingPathComponent(sub)
             guard let files = try? fm.contentsOfDirectory(atPath: subPath) else { continue }
             for file in files {
+                if Task.isCancelled { return nil }
                 let filePath = (subPath as NSString).appendingPathComponent(file)
                 if let attrs = try? fm.attributesOfItem(atPath: filePath),
                    let mod = attrs[.modificationDate] as? Date {
