@@ -234,3 +234,39 @@ def test_two_threshold_liveness_distinguishes_quiet_from_stalled(root: Path) -> 
     assert "private var isQuiet: Bool { activity?.isQuiet == true }" in view, "row must observe isQuiet"
     assert "isQuiet ? .secondary : .brandAccent" in view, "row must adapt tint for quiet state"
 
+
+def test_phase_signals_and_terminal_summary(root: Path) -> None:
+    """BackupManager emits real sanitization and fallback reason signals;
+    BackupViewModel and Coordinator track them in PhaseContext and surface
+    honest PhaseDetail cases including terminal summary upon completion."""
+    manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    types = read(root, "Sources/Phosphor/Utilities/BackupObservabilityTypes.swift")
+    coord = read(root, "Sources/Phosphor/Utilities/BackupObservabilityCoordinator.swift")
+    model = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+
+    # Manager sanitization returns structured result and emits signal string
+    assert "struct SanitizeResult" in manager
+    assert "onProgress(\"Sanitizing:" in manager
+    assert "onProgress(\"Fallback:" in manager
+
+    # Types define sanitization, fallback, terminal fields in PhaseContext
+    assert "public var sanitizationScanned: Int?" in types
+    assert "public var sanitizationCleaned: Int?" in types
+    assert "public var sanitizationWalCheckpointed: Bool?" in types
+    assert "public var fallbackReason: String?" in types
+    assert "public var terminalBytes: Int64?" in types
+
+    # Coordinator builds honest PhaseDetail without fabricated zeros
+    assert "case .sanitization:" in coord
+    assert "case .fallbackIdevicebackup2:" in coord
+    assert "case .completed:" in coord
+    assert ".sanitization(filesScanned: scanned, filesCleaned: cleaned, walCheckpointed: wal)" in coord
+    assert ".fallbackIdevicebackup2(reason: reason)" in coord
+    assert ".completed(totalBytes: bytes, totalFiles: files, duration: duration)" in coord
+
+    # Model parses signals and seeds terminal detail
+    assert "text.hasPrefix(\"Sanitizing:\")" in model
+    assert "text.hasPrefix(\"Fallback:\")" in model
+    assert "PhaseDetail.completed(totalBytes: totalBytes, totalFiles: totalFiles, duration: duration)" in model
+
+
