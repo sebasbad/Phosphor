@@ -972,8 +972,9 @@ struct BackupRow: View {
             .font(.system(size: 10))
 
             if let phase = activity.phaseMetrics?.phase {
+                let phaseText = activity.phaseMetrics?.phaseDetail?.description ?? phase.displayName
                 Label {
-                    Text(phase.displayName)
+                    Text(phaseText)
                 } icon: {
                     Image(systemName: phase.systemImage)
                 }
