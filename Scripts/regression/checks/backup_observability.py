@@ -270,3 +270,18 @@ def test_phase_signals_and_terminal_summary(root: Path) -> None:
     assert "PhaseDetail.completed(totalBytes: totalBytes, totalFiles: totalFiles, duration: duration)" in model
 
 
+def test_current_domain_sampling(root: Path) -> None:
+    """BackupManager samples recently written files and checks Manifest.db;
+    BackupViewModel liveness monitor samples domain and feeds PhaseContext."""
+    manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    coord = read(root, "Sources/Phosphor/Utilities/BackupObservabilityCoordinator.swift")
+    model = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+
+    assert "sampleActiveDomain(for udid: String" in manager
+    assert "manifest.entry(withFileID: fileID)?.domain" in manager
+    assert "BackupManager.sampleActiveDomain(for: udid)" in model
+    assert "context.currentDomain = activity.currentDomain" in model
+    assert "currentDomain: context.currentDomain" in coord
+
+
+
