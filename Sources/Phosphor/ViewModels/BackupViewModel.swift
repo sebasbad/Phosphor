@@ -540,12 +540,8 @@ final class BackupViewModel: ObservableObject {
         case .cancelRunning:
             if let manager = backupManagers[udid] {
                 manager.cancelBackup()
-            } else {
-                // A queued job is marked running when it is promoted, just before
-                // its task creates a BackupManager. Preserve cancellation through
-                // that handoff instead of letting the promoted job start anyway.
-                backupJobTasks[udid]?.cancel()
             }
+            backupJobTasks[udid]?.cancel()
             updateActivity(udid: udid) {
                 $0.progressText = "Pausing..."
                 $0.transition = .pausing
@@ -704,6 +700,14 @@ final class BackupViewModel: ObservableObject {
             } else {
                 baselineFraction = 0.05
             }
+        }
+        guard !Task.isCancelled else {
+            updateActivity(udid: udid) {
+                $0.state = .cancelled
+                $0.progressText = "Cancelled"
+            }
+            finishBackupJob(udid: udid)
+            return
         }
         updateActivity(udid: udid) {
             $0.state = .running
