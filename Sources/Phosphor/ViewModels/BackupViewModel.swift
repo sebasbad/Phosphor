@@ -260,9 +260,7 @@ final class BackupViewModel: ObservableObject {
                 }
                 if isQuiet {
                     let quietSeconds = Int(Date().timeIntervalSince(lastProgressUpdate))
-                    let remaining = max(0, 300 - quietSeconds)
-                    let remainingStr = PhaseTransitionRecord.formatDuration(TimeInterval(remaining))
-                    components.append("Waiting for device… (quiet \(quietSeconds)s, timeout in \(remainingStr))")
+                    components.append("Waiting for device… (quiet \(quietSeconds)s) · Transfer in progress")
                 } else {
                     if !isFinalizing {
                         if let speed, !speed.isEmpty {
