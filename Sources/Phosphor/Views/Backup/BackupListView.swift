@@ -169,18 +169,18 @@ struct BackupListView: View {
         } message: {
             Text(fullWiFiBackupConfirmationMessage)
         }
-        .alert("Stop Backup During Finalization?", isPresented: $showNonResumableCancelConfirm) {
+        .alert("Pause Backup During Finalization?", isPresented: $showNonResumableCancelConfirm) {
             Button("Keep Running", role: .cancel) {
                 pendingCancelActivityUDID = nil
             }
-            Button("Stop Anyway (Non-Resumable)", role: .destructive) {
+            Button("Pause and Keep Incomplete") {
                 if let udid = pendingCancelActivityUDID {
                     backupVM.cancelBackup(udid: udid)
                 }
                 pendingCancelActivityUDID = nil
             }
         } message: {
-            Text("The backup is currently consolidating and sealing its manifest on disk. This finalization phase is not partially resumable — stopping now will discard this completed backup and require starting fresh. Are you sure you want to stop?")
+            Text("All files transferred so far are safely preserved on disk. Because the backup is currently consolidating and sealing its files, stopping now will save it as an Incomplete backup. You can click Resume anytime to finish finalization.")
         }
         .sheet(isPresented: $showScheduleSheet) {
             BackupScheduleSheet()
@@ -1011,7 +1011,20 @@ struct BackupRow: View {
                     .tint(isStalled ? .orange : (isQuiet ? .secondary : .brandAccent))
 
             HStack(spacing: 6) {
-                Text(isStalled ? "Quiet (>5 min) · Device may be processing large files" : (isQuiet ? "Waiting for device response… (\(activity.progressText))" : activity.progressText))
+                let statusText: String = {
+                    if isStalled {
+                        return "Quiet (>5 min) · Device may be processing large files"
+                    }
+                    if isQuiet {
+                        return "Waiting for device response… (\(activity.progressText))"
+                    }
+                    if activity.isFinalizing {
+                        let pct = Int(activity.displayProgressFraction * 100)
+                        return "Finalizing & sealing (\(pct)%)"
+                    }
+                    return activity.progressText
+                }()
+                Text(statusText)
                     .font(.system(size: 10))
                     .foregroundStyle(isStalled ? Color.orange : Color.secondary)
                     .lineLimit(1)
