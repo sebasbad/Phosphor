@@ -690,7 +690,8 @@ struct BackupListView: View {
                         if activity.isBusy {
                             HStack(spacing: 6) {
                                 ProgressView().controlSize(.small)
-                                Text(activity.transition == .restarting ? "Restarting…" : "Pausing…")
+                                let elapsed = activity.transitionElapsedSeconds.map { " (\($0)s)" } ?? ""
+                                Text(activity.transition == .restarting ? "Restarting…\(elapsed)" : "Pausing…\(elapsed)")
                                     .font(.system(size: 11))
                                     .foregroundStyle(.secondary)
                             }
@@ -1094,7 +1095,8 @@ struct BackupRow: View {
                 if isBusy {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
-                        Text(activity?.transition == .restarting ? "Restarting…" : "Pausing…")
+                        let elapsed = activity?.transitionElapsedSeconds.map { " (\($0)s)" } ?? ""
+                        Text(activity?.transition == .restarting ? "Restarting…\(elapsed)" : "Pausing…\(elapsed)")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
