@@ -894,6 +894,14 @@ struct BackupDiagnosisSheet: View {
     let udid: String
     let text: String
     let dismiss: () -> Void
+    @EnvironmentObject private var backupVM: BackupViewModel
+    @State private var liveText: String = ""
+    @State private var refreshTimer: Timer?
+
+    private var currentText: String {
+        if !liveText.isEmpty { return liveText }
+        return text
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -902,15 +910,27 @@ struct BackupDiagnosisSheet: View {
                     .foregroundStyle(.orange)
                     .font(.system(size: 24))
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Backup Diagnosis")
-                        .font(.title3.weight(.semibold))
+                    HStack(spacing: 8) {
+                        Text("Backup Diagnosis")
+                            .font(.title3.weight(.semibold))
+                        if backupVM.isBackupActive(for: udid) {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(Color.green)
+                                    .frame(width: 7, height: 7)
+                                Text("Live (Updating 1s)")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                     Text("What Phosphor last observed for this backup.")
                         .foregroundStyle(.secondary)
                 }
             }
 
             ScrollView {
-                Text(text)
+                Text(currentText)
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -923,15 +943,33 @@ struct BackupDiagnosisSheet: View {
             HStack {
                 Button("Copy") {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
+                    NSPasteboard.general.setString(currentText, forType: .string)
                 }
                 Spacer()
-                Button("Done") { dismiss() }
-                    .buttonStyle(.borderedProminent)
+                Button("Done") {
+                    refreshTimer?.invalidate()
+                    refreshTimer = nil
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
             }
         }
         .padding(24)
         .frame(width: 560)
+        .onAppear {
+            liveText = backupVM.diagnosisText(for: udid) ?? text
+            refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                Task { @MainActor in
+                    if let updated = backupVM.diagnosisText(for: udid) {
+                        liveText = updated
+                    }
+                }
+            }
+        }
+        .onDisappear {
+            refreshTimer?.invalidate()
+            refreshTimer = nil
+        }
     }
 }
 
@@ -1137,6 +1175,14 @@ struct BackupRow: View {
                         exportAsArchive()
                     } label: {
                         Label("Export as .phosphor Archive", systemImage: "archivebox")
+                    }
+
+                    Divider()
+
+                    Button {
+                        onDiagnose()
+                    } label: {
+                        Label("Diagnose & Activity Log…", systemImage: "stethoscope")
                     }
 
                     Divider()
