@@ -703,6 +703,18 @@ struct BackupListView: View {
                             .tint(.orange)
                             .controlSize(.small)
                             .help("No progress for 5+ minutes - restarts this backup from saved progress")
+                            Button {
+                                if activity.isNonResumableFinalizationPhase {
+                                    pendingCancelActivityUDID = activity.udid
+                                    showNonResumableCancelConfirm = true
+                                } else {
+                                    backupVM.cancelBackup(udid: activity.udid)
+                                }
+                            } label: {
+                                Label("Pause & Save", systemImage: "pause.circle")
+                            }
+                            .controlSize(.small)
+                            .help("Stops the backup and saves progress. You can resume later.")
                             Button("Diagnose…") {
                                 diagnosisUDID = activity.udid
                                 showDiagnosisSheet = true
@@ -999,23 +1011,34 @@ struct BackupRow: View {
                     .tint(isStalled ? .orange : (isQuiet ? .secondary : .brandAccent))
 
             HStack(spacing: 6) {
-                Text(isStalled ? "Stalled - no progress for 5+ min" : (isQuiet ? "Waiting for device… (\(activity.progressText))" : activity.progressText))
+                Text(isStalled ? "Quiet (>5 min) · Device may be processing large files" : (isQuiet ? "Waiting for device response… (\(activity.progressText))" : activity.progressText))
                     .font(.system(size: 10))
-                    .foregroundStyle(isStalled ? Color.orange : (isQuiet ? Color.secondary : Color.secondary))
+                    .foregroundStyle(isStalled ? Color.orange : Color.secondary)
                     .lineLimit(1)
                 if let speed = activity.speed {
-                    Text("- \(speed)")
-                    if let eta = activity.eta { Text("- ETA \(eta)") }
+                    Text("· Speed: \(speed)")
+                    if let eta = activity.eta { Text("· Est. Remaining: \(eta)") }
                 }
             }
             .font(.system(size: 10))
 
             if let phase = activity.phaseMetrics?.phase {
                 let phaseText = activity.phaseMetrics?.phaseDetail?.description ?? phase.displayName
-                Label {
-                    Text(phaseText)
-                } icon: {
-                    Image(systemName: phase.systemImage)
+                HStack(spacing: 8) {
+                    Label {
+                        Text(phaseText)
+                    } icon: {
+                        Image(systemName: phase.systemImage)
+                    }
+                    if let phaseMetrics = activity.phaseMetrics {
+                        if let transferred = phaseMetrics.filesTransferred, let total = phaseMetrics.totalFiles, total > 0 {
+                            let remaining = max(0, total - transferred)
+                            Text("· Files: \(transferred.formatted()) / \(total.formatted()) (\(remaining.formatted()) left)")
+                        }
+                        if let bytes = phaseMetrics.bytesTransferred, let totalB = phaseMetrics.totalBytes, totalB > 0 {
+                            Text("· Data: \(bytes.formattedFileSize) / \(totalB.formattedFileSize)")
+                        }
+                    }
                 }
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
@@ -1023,10 +1046,10 @@ struct BackupRow: View {
 
             if let stats = activity.throughputStats, stats.samplesCount >= 5 {
                 HStack(spacing: 6) {
-                    Text("avg \(Self.formatRate(stats.averageBytesPerSecond))")
-                    Text("peak \(Self.formatRate(stats.peakBytesPerSecond))")
+                    Text("Avg: \(Self.formatRate(stats.averageBytesPerSecond))")
+                    Text("· Peak: \(Self.formatRate(stats.peakBytesPerSecond))")
                     if activity.throughputTrend != .insufficient {
-                        Text("- \(activity.throughputTrend.description)")
+                        Text("· Trend: \(activity.throughputTrend.description)")
                     }
                 }
                 .font(.system(size: 10))
@@ -1036,21 +1059,20 @@ struct BackupRow: View {
             if let predicted = activity.predictiveETA,
                predicted.confidence != .none,
                predicted.estimatedSeconds > 0 {
-                Text("Predicted \(Self.formatDuration(predicted.estimatedSeconds)) remaining · \(predicted.confidence.rawValue) confidence")
+                Text("Predicted Remaining: \(Self.formatDuration(predicted.estimatedSeconds)) (\(predicted.confidence.rawValue) confidence)")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
 
             if let metrics = activity.finalizationMetrics {
-                Text("Finalizing: \(metrics.filesMoved.formatted()) / ~\(metrics.totalFiles.formatted()) files")
+                Text("Finalizing: \(metrics.filesMoved.formatted()) / ~\(metrics.totalFiles.formatted()) files moved")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
 
             if isQuiet {
                 let quietSecs = Int(Date().timeIntervalSince(activity.lastProgressUpdate))
-                let remainingSecs = max(0, 300 - quietSecs)
-                Text("Quiet for \(quietSecs)s · timeout countdown: \(Self.formatDuration(TimeInterval(remainingSecs)))")
+                Text("Device response quiet for \(quietSecs)s · Transfer is still running in background")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
@@ -1145,6 +1167,10 @@ struct BackupRow: View {
                             .tint(.orange)
                             .controlSize(.small)
                             .help("No progress for 5+ minutes - restarts this backup from saved progress")
+                        Button("Pause & Save", action: onPause)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("Stops the backup and saves progress. You can resume later.")
                         Button("Diagnose…") { onDiagnose() }
                             .controlSize(.small)
                             .help("Show why this backup stalled")
