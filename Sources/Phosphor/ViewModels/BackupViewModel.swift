@@ -188,6 +188,11 @@ final class BackupViewModel: ObservableObject {
             return Date().timeIntervalSince(lastProgressUpdate) > 300 // 5 minutes without progress
         }
 
+        var transitionElapsedSeconds: Int? {
+            guard let transitionStartTime else { return nil }
+            return max(0, Int(Date().timeIntervalSince(transitionStartTime)))
+        }
+
         var isQuiet: Bool {
             guard transition == nil else { return false }
             guard case .running = state else { return false }
@@ -196,6 +201,15 @@ final class BackupViewModel: ObservableObject {
         }
 
         var displayProgressText: String {
+            if let transition {
+                let elapsed = transitionElapsedSeconds.map { " (\($0)s)" } ?? ""
+                switch transition {
+                case .pausing:
+                    return "Pausing…\(elapsed) · Saving state to disk"
+                case .restarting:
+                    return "Restarting…\(elapsed) · Preparing fresh session"
+                }
+            }
             switch state {
             case .queued(let position): return "Queued · #\(position)"
             case .running:
