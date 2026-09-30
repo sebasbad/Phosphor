@@ -610,13 +610,36 @@ final class BackupViewModel: ObservableObject {
     /// throughput samples say. This is the answer to "why is Resume doing
     /// nothing" — previously that state produced no visible information at all.
     func diagnosisText(for udid: String) -> String? {
-        guard let activity = backupActivities[udid] else { return nil }
+        guard let activity = backupActivities[udid] else {
+            // If there's no in-flight activity, provide diagnosis based on preserved backup on disk
+            guard let backup = backups.first(where: { $0.udid == udid || $0.id == udid }) else {
+                return nil
+            }
+            var lines: [String] = []
+            lines.append("Device: \(backup.deviceName) (\(backup.modelName))")
+            lines.append("Identifier: \(backup.deviceIdentityLabel)")
+            lines.append("Status: \(backup.isFullBackup ? "Complete backup" : "Preserved partial backup (resumable)")")
+            lines.append("Path: \(backup.path)")
+            lines.append("Last modified: \(backup.dateString) (\(backup.relativeDate))")
+            lines.append("Size on disk: \(backup.sizeResolved ? backup.sizeString : "Calculating...")")
+            if backup.appCount > 0 {
+                lines.append("Installed applications: \(backup.appCount)")
+            }
+            lines.append("Encrypted: \(backup.isEncrypted ? "Yes" : "No")")
+            lines.append("")
+            lines.append("Activity: Idle (No live backup process currently active).")
+            return lines.joined(separator: "\n")
+        }
         var lines: [String] = []
         lines.append("State: \(activity.state)")
         lines.append("Phase: \((activity.phaseMetrics?.phase ?? activity.observabilityPhase).displayName)")
         lines.append("Last progress: \(activity.progressText)")
         if let fraction = activity.progressFraction {
             lines.append("Progress fraction: \(Int(fraction * 100))%")
+        }
+        if let transition = activity.transition {
+            let elapsed = activity.transitionElapsedSeconds.map { " (\($0)s)" } ?? ""
+            lines.append("Transition: \(transition == .restarting ? "restarting" : "pausing")\(elapsed)")
         }
         lines.append("Last progress update: \(Int(Date().timeIntervalSince(activity.lastProgressUpdate)))s ago")
         lines.append("Stalled (no progress for 5+ min): \(activity.isStalled ? "yes" : "no")")
