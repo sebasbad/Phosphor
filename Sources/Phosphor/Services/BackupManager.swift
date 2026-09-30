@@ -1604,11 +1604,9 @@ final class BackupManager: ObservableObject {
         if let activeOperationID = operationCoordinator.activeOperationID {
             cancelledOperationIDs.insert(activeOperationID)
             if let activeProcess, cancellationDrainTasks[activeOperationID] == nil {
-                // Keep the per-device operation lease until every descendant is
-                // gone. The streaming leader can exit before a TERM-ignoring
-                // child, so its completion alone is not cancellation completion.
+                // Fast cancel for pause/save: SIGTERM with grace window, then clean reap
                 cancellationDrainTasks[activeOperationID] = Task {
-                    await Shell.terminateAndWait(activeProcess)
+                    await Shell.cancelAndWait(activeProcess)
                 }
             }
         }
