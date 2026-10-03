@@ -18,6 +18,7 @@ enum Shell {
     final class ManagedProcess: @unchecked Sendable {
         let processIdentifier: pid_t
         fileprivate let processTree: ProcessTree
+        private var onCancelClosure: (@Sendable () -> Void)?
 
         init(processIdentifier: pid_t) {
             self.processIdentifier = processIdentifier
@@ -25,6 +26,15 @@ enum Shell {
             // to exist. Reconstructing this after waitpid() has reaped the leader
             // loses the group identity and can miss a still-writing descendant.
             self.processTree = ProcessTree(rootProcessID: processIdentifier)
+        }
+
+        func setOnCancel(_ closure: @escaping @Sendable () -> Void) {
+            self.onCancelClosure = closure
+        }
+
+        func notifyCancel() {
+            onCancelClosure?()
+            onCancelClosure = nil
         }
 
         var isRunning: Bool {
@@ -708,6 +718,10 @@ enum Shell {
             state.setTimeoutTask(timeoutTask)
         }
 
+        process.setOnCancel {
+            finish(exitCode: -1)
+        }
+
         return process
     }
 
@@ -741,17 +755,26 @@ enum Shell {
     static func cancelAndWait(_ process: ManagedProcess) async {
         let pid = process.processIdentifier
         guard pid > 0 else { return }
+        let startTime = Date()
+        NSLog("[Phosphor:PauseTrace] cancelAndWait initiated for pid %d", pid)
         let processTree = process.processTree
 
         // 1. Cooperative shutdown: give the tool a chance to checkpoint.
         terminateProcessTree(processTree, signal: SIGTERM)
+        NSLog("[Phosphor:PauseTrace] pid %d sent SIGTERM, waiting 0.5s grace", pid)
         try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 s
 
         // 2. Force-kill the whole process group unconditionally.
         terminateProcessTree(processTree, signal: SIGKILL)
+        NSLog("[Phosphor:PauseTrace] pid %d sent SIGKILL", pid)
 
-        // 3. Reap the session leader. Bounded so a zombie never blocks forever.
-        _ = reapWithinDeadline(pid, timeout: 1.0)
+        // 3. Immediately tear down streaming readability handlers and signal finish.
+        process.notifyCancel()
+
+        // 4. Reap the session leader. Bounded so a zombie never blocks forever.
+        let reaped = reapWithinDeadline(pid, timeout: 1.0)
+        let elapsed = Date().timeIntervalSince(startTime)
+        NSLog("[Phosphor:PauseTrace] pid %d reap result: %d in %.3fs", pid, reaped ? 1 : 0, elapsed)
     }
 
     /// Check if a command-line tool is available.

@@ -12,9 +12,9 @@ struct DeviceOverviewView: View {
     @State private var copiedField: String?
     @State private var showFullWiFiBackupConfirm = false
     @State private var pendingBackupDevice: DeviceInfo?
-    @State private var showNonResumableCancelConfirm = false
-    @State private var pendingCancelDeviceID: String?
-    @State private var hasCurrentResumableBackup: Bool = false
+    @State private var pendingIncompleteBackupIssue: BackupManager.BackupFailure?
+    @State private var showIncompleteBackupTrashConfirm = false
+    var onShowPreflight: ((DeviceInfo) -> Void)? = nil
 
     var body: some View {
         Group {
@@ -32,7 +32,6 @@ struct DeviceOverviewView: View {
                 .background(Color.groupedBackground)
                 .task(id: device.id) {
                     backupVM.loadBackups()
-                    await updateResumableStatus(for: device.id)
                     battery = await diagnostics.getBatteryDiagnostics(udid: device.id)
                     storage = await diagnostics.getStorageBreakdown(udid: device.id)
                 }
@@ -51,10 +50,34 @@ struct DeviceOverviewView: View {
         } message: {
             Text(backupVM.alertMessage)
         }
-        .alert("Backup Issue", isPresented: backupIssuePresented) {
-            Button("OK", role: .cancel) { backupVM.backupIssue = nil }
+        .sheet(item: $backupVM.backupIssue) { issue in
+            BackupIssueSheet(
+                issue: issue,
+                primaryActionTitle: backupIssueActionTitle(for: issue),
+                primaryAction: { handleBackupIssueAction(issue) },
+                secondaryActionTitle: issue.recoveryAction == .resumeBackup ? "Delete & Start Fresh" : nil,
+                secondaryAction: issue.recoveryAction == .resumeBackup ? {
+                    pendingIncompleteBackupIssue = issue
+                    backupVM.backupIssue = nil
+                    showIncompleteBackupTrashConfirm = true
+                } : nil,
+                dismiss: { backupVM.backupIssue = nil }
+            )
+        }
+        .confirmationDialog(
+            "Move Incomplete Backup to Trash?",
+            isPresented: $showIncompleteBackupTrashConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Move to Trash & Run Full Backup", role: .destructive) {
+                if let issue = pendingIncompleteBackupIssue {
+                    Task { await backupVM.deleteIncompleteBackupAndRunFull(for: issue) }
+                }
+                pendingIncompleteBackupIssue = nil
+            }
+            Button("Cancel", role: .cancel) { pendingIncompleteBackupIssue = nil }
         } message: {
-            Text(backupVM.backupIssue.map { "\($0.title)\n\n\($0.message)" } ?? "Backup failed")
+            Text("The incomplete backup folder will be moved to the Trash. The device needs to be unlocked and connected over USB for the full backup to succeed.")
         }
         .alert("Full Wi-Fi Backup?", isPresented: $showFullWiFiBackupConfirm) {
             Button("Run Full Wi-Fi Backup") {
@@ -67,26 +90,40 @@ struct DeviceOverviewView: View {
         } message: {
             Text("This device is connected over Wi-Fi. Full backups can be slower and more sensitive to sleep, lock, and network interruptions. Incremental Wi-Fi Backup is recommended when a complete backup already exists.")
         }
-        .alert("Stop Backup During Finalization?", isPresented: $showNonResumableCancelConfirm) {
-            Button("Keep Running", role: .cancel) {
-                pendingCancelDeviceID = nil
-            }
-            Button("Stop Anyway (Non-Resumable)", role: .destructive) {
-                if let udid = pendingCancelDeviceID {
-                    backupVM.cancelBackup(udid: udid)
-                }
-                pendingCancelDeviceID = nil
-            }
-        } message: {
-            Text("The backup is currently consolidating and sealing its manifest on disk. This finalization phase is not partially resumable — stopping now will discard this completed backup and require starting fresh. Are you sure you want to stop?")
+    }
+
+    private func backupIssueActionTitle(for issue: BackupManager.BackupFailure) -> String? {
+        switch issue.recoveryAction {
+        case .resumeBackup: return "Resume Backup"
+        case .runFullBackup: return "Run Full Backup"
+        case .deleteIncompleteAndRunFull: return "Delete Incomplete Backup & Run Full"
+        case .openBackupSettings: return "Open Backup Settings"
+        case .retry: return "Retry"
+        case .none: return nil
         }
     }
 
-    private var backupIssuePresented: Binding<Bool> {
-        Binding(
-            get: { backupVM.backupIssue != nil },
-            set: { if !$0 { backupVM.backupIssue = nil } }
-        )
+    private func handleBackupIssueAction(_ issue: BackupManager.BackupFailure) {
+        switch issue.recoveryAction {
+        case .resumeBackup:
+            backupVM.backupIssue = nil
+            Task { await backupVM.resumeBackup(for: issue) }
+        case .runFullBackup:
+            backupVM.backupIssue = nil
+            Task { await backupVM.runFullBackup(for: issue) }
+        case .deleteIncompleteAndRunFull:
+            pendingIncompleteBackupIssue = issue
+            backupVM.backupIssue = nil
+            showIncompleteBackupTrashConfirm = true
+        case .openBackupSettings:
+            backupVM.backupIssue = nil
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        case .retry:
+            backupVM.backupIssue = nil
+            Task { await backupVM.retryBackup(for: issue) }
+        case .none:
+            backupVM.backupIssue = nil
+        }
     }
 
     private var noDeviceView: some View {
@@ -426,94 +463,6 @@ struct DeviceOverviewView: View {
                 }
             }
 
-            if let activity = backupVM.activity(for: device.id), activity.isActive || activity.state == .cancelled {
-                VStack(alignment: .leading, spacing: 8) {
-                    if activity.isAwaitingPasscode {
-                        HStack(spacing: 8) {
-                            Image(systemName: "lock.shield.fill")
-                                .foregroundStyle(.orange)
-                                .font(.system(size: 14, weight: .semibold))
-                            Text("Please unlock your device and enter your passcode or tap 'Trust' to proceed...")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(.orange)
-                        }
-                        .padding(.vertical, 4)
-                        .padding(.horizontal, 8)
-                        .background(Color.orange.opacity(0.12))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                    }
-
-                    HStack {
-                        Text(activity.displayProgressText)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(activity.state == .cancelled ? .primary : .secondary)
-                            .lineLimit(1)
-                        Spacer()
-
-                        if activity.state == .cancelled {
-                            Button {
-                                Task {
-                                    await backupVM.resumeBackup(
-                                        udid: device.id,
-                                        preferNetwork: device.connectionType == .wifi,
-                                        device: device
-                                    )
-                                }
-                            } label: {
-                                Label("Resume", systemImage: "play.fill")
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.orange)
-                            .controlSize(.small)
-
-                            Button {
-                                backupVM.dismissActivity(for: device.id)
-                            } label: {
-                                Image(systemName: "xmark.circle")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Dismiss")
-                        } else if activity.isCancelling {
-                            Button {
-                            } label: {
-                                HStack(spacing: 4) {
-                                    ProgressView()
-                                        .controlSize(.mini)
-                                    Text("Pausing...")
-                                }
-                            }
-                            .controlSize(.small)
-                            .disabled(true)
-                            .accessibilityLabel("Pausing backup for \(device.name)")
-                        } else {
-                            Button {
-                                if activity.isNonResumableFinalizationPhase {
-                                    pendingCancelDeviceID = device.id
-                                    showNonResumableCancelConfirm = true
-                                } else {
-                                    backupVM.cancelBackup(udid: device.id)
-                                }
-                            } label: {
-                                Label("Pause & Save", systemImage: "pause.circle")
-                            }
-                            .controlSize(.small)
-                            .help(activity.isNonResumableFinalizationPhase ? "Warning: Finalization is non-resumable. Stopping now will abort this completed backup." : "Stops the backup and saves progress. You can resume later.")
-                        }
-                    }
-                    ProgressView(
-                        value: activity.displayProgressFraction,
-                        total: 1.0
-                    )
-                    .progressViewStyle(.linear)
-                    .tint(activity.state == .cancelled ? .orange : (activity.isAwaitingPasscode ? .orange : .brandAccent))
-
-                    Text(activity.state == .cancelled ? "Progress is saved. You can reconnect or click Resume anytime to continue." : (activity.isFinalizing ? (activity.finalizationMetrics != nil ? "Reorganizing files from snapshot onto disk. Do not disconnect." : "Consolidating files and sealing backup manifest on disk...") : "Progress is saved automatically. You can resume later."))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
             if device.connectionType == .usb {
                 Text("Enable Wi-Fi turns on Finder's \"Show this iPhone when on Wi-Fi\" option. After it succeeds, unplug the cable, keep the device unlocked, then scan again.")
                     .font(.caption)
@@ -525,18 +474,6 @@ struct DeviceOverviewView: View {
 
     // MARK: - Helpers
 
-    private func updateResumableStatus(for udid: String) async {
-        let isResumable = await Task.detached(priority: .utility) { () -> Bool in
-            if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: udid) {
-                return BackupManager.incompleteBackupHasPayloadData(path)
-            }
-            return false
-        }.value
-        await MainActor.run {
-            self.hasCurrentResumableBackup = isResumable
-        }
-    }
-
     private func hasCompleteBackup(for device: DeviceInfo) -> Bool {
         BackupManager.hasExistingBackup(for: device.id) && backupVM.backups.contains { backup in
             backup.udid == device.id || backup.id == device.id
@@ -544,9 +481,6 @@ struct DeviceOverviewView: View {
     }
 
     private func hasResumableBackup(for device: DeviceInfo) -> Bool {
-        if device.id == deviceVM.selectedDevice?.id {
-            return hasCurrentResumableBackup
-        }
         if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: device.id) {
             return BackupManager.incompleteBackupHasPayloadData(path)
         }
@@ -572,7 +506,7 @@ struct DeviceOverviewView: View {
 
     private func startBackup(for device: DeviceInfo) {
         if hasResumableBackup(for: device) {
-            Task { await backupVM.resumeBackup(udid: device.id, preferNetwork: device.connectionType == .wifi, device: device) }
+            onShowPreflight?(device)
             return
         }
         let preferNetwork = device.connectionType == .wifi

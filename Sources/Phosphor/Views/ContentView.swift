@@ -12,6 +12,11 @@ struct ContentView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var tunnelRunning = true
     @State private var tunnelStarting = false
+    @State private var showPreflightSheet = false
+    @State private var preflightDevice: DeviceInfo?
+    @State private var preflightIncremental = false
+    @State private var preflightPreferNetwork = false
+    @State private var preflightConfig = DeviceBackupConfiguration()
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -40,6 +45,28 @@ struct ContentView: View {
         .sheet(item: $backupVM.pendingUnlock) { backup in
             BackupUnlockSheet(backup: backup)
                 .environmentObject(backupVM)
+        }
+        .sheet(isPresented: $showPreflightSheet) {
+            if let device = preflightDevice {
+                BackupPreflightSheet(
+                    device: device,
+                    incremental: preflightIncremental,
+                    preferNetwork: preflightPreferNetwork,
+                    configuration: $preflightConfig,
+                    onNavigateToBackups: {
+                        selectedSection = .backups
+                    },
+                    onStartBackup: {
+                        Task {
+                            await backupVM.createBackup(
+                                udid: device.id,
+                                incremental: preflightIncremental,
+                                preferNetwork: preflightPreferNetwork
+                            )
+                        }
+                    }
+                )
+            }
         }
         .task {
             // Defer process probing until after first paint.
@@ -161,7 +188,13 @@ struct ContentView: View {
     private var detailView: some View {
         switch selectedSection {
         case .devices:
-            DeviceOverviewView()
+            DeviceOverviewView(onShowPreflight: { device in
+                preflightDevice = device
+                preflightIncremental = device.connectionType == .wifi && BackupManager.hasExistingBackup(for: device.id)
+                preflightPreferNetwork = device.connectionType == .wifi
+                preflightConfig = DeviceBackupConfiguration.load(for: device.id)
+                showPreflightSheet = true
+            })
         case .readiness:
             ReadinessCenterView()
         case .backups:

@@ -48,6 +48,7 @@ struct PhosphorApp: App {
     @StateObject private var messageVM = MessageViewModel()
     @StateObject private var whatsAppVM = WhatsAppViewModel()
     @StateObject private var scheduler = BackupScheduler()
+    @StateObject private var appManager = AppManager()
     @StateObject private var updateController = UpdateViewModel()
     @AppStorage("phosphor.hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @State private var selectedSection: SidebarSection? = .devices
@@ -68,6 +69,7 @@ struct PhosphorApp: App {
                 .environmentObject(updateController)
                 .environmentObject(messageVM)
                 .environmentObject(whatsAppVM)
+                .environmentObject(appManager)
                 .frame(minWidth: 960, minHeight: 640)
                 .onAppear {
                     // Register scheduled/background ownership before the delayed
