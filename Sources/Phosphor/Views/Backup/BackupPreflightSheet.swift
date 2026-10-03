@@ -24,6 +24,11 @@ struct BackupPreflightSheet: View {
     }
 
     @State private var currentStep: PreflightStep = .options
+    @State private var archiveExistingOnFullBackup: Bool = true
+
+    private var hasExistingBackup: Bool {
+        BackupManager.hasExistingBackup(for: device.id, in: backupDirectory)
+    }
 
     private var destinationPath: String {
         backupDirectory
@@ -186,6 +191,32 @@ struct BackupPreflightSheet: View {
                     }
                     .padding(12)
                     .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+
+                    // Archive existing backup protection toggle
+                    if hasExistingBackup && !incremental {
+                        HStack(spacing: 10) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .font(.system(size: 15))
+                                .foregroundStyle(Color.brandAccent)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Preserve Existing Backup")
+                                    .font(.system(size: 12, weight: .semibold))
+                                Text("Archive current backup before full backup to prevent overwriting.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
+
+                            Toggle("", isOn: $archiveExistingOnFullBackup)
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                        }
+                        .padding(12)
+                        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+                    }
                 }
                 .padding(24)
             }
@@ -202,6 +233,9 @@ struct BackupPreflightSheet: View {
                 Spacer()
 
                 Button {
+                    if hasExistingBackup && !incremental && archiveExistingOnFullBackup {
+                        BackupManager.archiveExistingBackup(for: device.id, in: backupDirectory)
+                    }
                     onNavigateToBackups()
                     dismiss()
                     onStartBackup()

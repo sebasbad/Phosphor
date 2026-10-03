@@ -367,6 +367,7 @@ final class BackupViewModel: ObservableObject {
         let encrypted: Bool
         let isResume: Bool
         let device: DeviceInfo?
+        let configuration: DeviceBackupConfiguration?
 
         init(
             id: UUID = UUID(),
@@ -375,7 +376,8 @@ final class BackupViewModel: ObservableObject {
             preferNetwork: Bool = false,
             encrypted: Bool = false,
             isResume: Bool = false,
-            device: DeviceInfo? = nil
+            device: DeviceInfo? = nil,
+            configuration: DeviceBackupConfiguration? = nil
         ) {
             self.id = id
             self.udid = udid
@@ -384,6 +386,7 @@ final class BackupViewModel: ObservableObject {
             self.encrypted = encrypted
             self.isResume = isResume
             self.device = device
+            self.configuration = configuration
         }
     }
 
@@ -457,7 +460,19 @@ final class BackupViewModel: ObservableObject {
         }
     }
 
-    func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false, encrypted: Bool = false, isResume: Bool = false, device: DeviceInfo? = nil) async {
+    func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false) async {
+        await createBackup(
+            udid: udid,
+            incremental: incremental,
+            preferNetwork: preferNetwork,
+            encrypted: false,
+            isResume: false,
+            device: nil,
+            configuration: DeviceBackupConfiguration.load(for: udid)
+        )
+    }
+
+    func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false, encrypted: Bool = false, isResume: Bool = false, device: DeviceInfo? = nil, configuration: DeviceBackupConfiguration? = nil) async {
         let request = BackupRequest(
             id: UUID(),
             udid: udid,
@@ -465,7 +480,8 @@ final class BackupViewModel: ObservableObject {
             preferNetwork: preferNetwork,
             encrypted: encrypted,
             isResume: isResume,
-            device: device
+            device: device,
+            configuration: configuration
         )
         latestBackupRequests[udid] = request
 
@@ -568,14 +584,15 @@ final class BackupViewModel: ObservableObject {
         }
     }
 
-    func resumeBackup(udid: String, preferNetwork: Bool = false, encrypted: Bool = false, device: DeviceInfo? = nil) async {
+    func resumeBackup(udid: String, preferNetwork: Bool = false, encrypted: Bool = false, device: DeviceInfo? = nil, configuration: DeviceBackupConfiguration? = nil) async {
         await createBackup(
             udid: udid,
             incremental: false,
             preferNetwork: preferNetwork,
             encrypted: encrypted,
             isResume: true,
-            device: device
+            device: device,
+            configuration: configuration
         )
     }
 
@@ -770,18 +787,28 @@ final class BackupViewModel: ObservableObject {
             success = await manager.resumeIncompleteBackup(
                 udid: udid,
                 encrypted: request.encrypted,
-                preferNetwork: request.preferNetwork
+                preferNetwork: request.preferNetwork,
+                configuration: request.configuration
             ) { [weak self, weak manager] text in
                 guard let manager else { return }
                 self?.updateBackupProgress(udid: udid, text: text, manager: manager)
             }
         } else if request.incremental {
-            success = await manager.createIncrementalBackup(udid: udid, preferNetwork: request.preferNetwork) { [weak self, weak manager] text in
+            success = await manager.createIncrementalBackup(
+                udid: udid,
+                preferNetwork: request.preferNetwork,
+                configuration: request.configuration
+            ) { [weak self, weak manager] text in
                 guard let manager else { return }
                 self?.updateBackupProgress(udid: udid, text: text, manager: manager)
             }
         } else {
-            success = await manager.createBackup(udid: udid, encrypted: request.encrypted, preferNetwork: request.preferNetwork) { [weak self, weak manager] text in
+            success = await manager.createBackup(
+                udid: udid,
+                encrypted: request.encrypted,
+                preferNetwork: request.preferNetwork,
+                configuration: request.configuration
+            ) { [weak self, weak manager] text in
                 guard let manager else { return }
                 self?.updateBackupProgress(udid: udid, text: text, manager: manager)
             }
