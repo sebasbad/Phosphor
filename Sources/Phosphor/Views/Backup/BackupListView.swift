@@ -1129,8 +1129,8 @@ struct BackupRow: View {
                             .help("Encrypted backup")
                     }
 
-                    if backup.isFullBackup {
-                        StatusChip(text: "Full", color: .brandAccent)
+                    if backup.isComplete {
+                        StatusChip(text: backup.isFullBackup ? "Full" : "Incremental", color: .brandAccent)
                     } else {
                         StatusChip(text: "Incomplete", color: .orange)
                     }
@@ -1193,7 +1193,7 @@ struct BackupRow: View {
                             .controlSize(.small)
                             .help("Stops the backup and saves progress. You can resume later.")
                     }
-                } else if !backup.isFullBackup {
+                } else if !backup.isComplete {
                     Button("Resume", action: onResume)
                         .buttonStyle(.borderedProminent)
                         .tint(.orange)

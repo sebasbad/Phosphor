@@ -69,6 +69,24 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
         size.formattedFileSize
     }
 
+    /// Whether this backup has sealed metadata and completed snapshot files.
+    var isComplete: Bool {
+        if isFullBackup { return true }
+        let manifestDb = (path as NSString).appendingPathComponent("Manifest.db")
+        let manifestPlist = (path as NSString).appendingPathComponent("Manifest.plist")
+        let fm = FileManager.default
+        let hasManifest = (fm.fileExists(atPath: manifestDb) && ((try? fm.attributesOfItem(atPath: manifestDb)[.size] as? UInt64) ?? 0) > 0) ||
+                          (fm.fileExists(atPath: manifestPlist) && ((try? fm.attributesOfItem(atPath: manifestPlist)[.size] as? UInt64) ?? 0) > 0)
+        guard hasManifest else { return false }
+        let statusPath = (path as NSString).appendingPathComponent("Status.plist")
+        guard let data = fm.contents(atPath: statusPath),
+              let plist = (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) as? [String: Any],
+              let snapshotState = plist["SnapshotState"] as? String else {
+            return false
+        }
+        return snapshotState.lowercased() == "finished"
+    }
+
     /// Initialize from a backup directory by parsing its plists.
     /// Size calculation recursively walks the whole backup and can be very slow
     /// for large backups, so startup discovery can skip it and fill sizes later.
