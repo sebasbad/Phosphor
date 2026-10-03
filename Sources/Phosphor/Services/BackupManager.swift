@@ -433,6 +433,29 @@ final class BackupManager: ObservableObject {
         backupMetadataHealth(for: udid, in: directory) == .complete
     }
 
+    /// Preserves an existing complete backup folder by timestamping it
+    /// (e.g. `<UDID>-YYYYMMDD-HHmmss`) so subsequent backups do not clobber historical snapshots.
+    @discardableResult
+    static func archiveExistingBackup(for udid: String, in directory: String? = nil) -> String? {
+        let root = directory ?? activeBackupDir
+        let currentPath = backupPath(for: udid, in: root)
+        let fm = FileManager.default
+        guard hasExistingBackup(for: udid, in: root) else { return nil }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let timestamp = formatter.string(from: Date())
+        let archivedName = "\(udid)-\(timestamp)"
+        let archivedPath = (root as NSString).appendingPathComponent(archivedName)
+
+        do {
+            try fm.moveItem(atPath: currentPath, toPath: archivedPath)
+            return archivedPath
+        } catch {
+            return nil
+        }
+    }
+
     static func incompleteBackupHasKnownMarkers(_ path: String) -> Bool {
         let knownMarkers = ["Info.plist", "Status.plist", "Manifest.plist", "Manifest.db", "Manifest.mbdb"]
         return knownMarkers.contains { marker in
@@ -867,6 +890,7 @@ final class BackupManager: ObservableObject {
         udid: String,
         encrypted: Bool = false,
         preferNetwork: Bool = false,
+        configuration: DeviceBackupConfiguration? = nil,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
         // Per-device ownership first (#60): if another owner already holds this
@@ -936,6 +960,7 @@ final class BackupManager: ObservableObject {
             directory: backupRoot,
             full: true,
             preferNetwork: preferNetwork,
+            configuration: configuration,
             operationID: operationID,
             onProgress: onProgress
         )
@@ -1169,6 +1194,7 @@ final class BackupManager: ObservableObject {
     func createIncrementalBackup(
         udid: String,
         preferNetwork: Bool = false,
+        configuration: DeviceBackupConfiguration? = nil,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
         // Per-device ownership first (#60): if another owner already holds this
@@ -1254,6 +1280,7 @@ final class BackupManager: ObservableObject {
                 directory: backupRoot,
                 full: false,
                 preferNetwork: preferNetwork,
+                configuration: configuration,
                 operationID: operationID,
                 onProgress: onProgress
             )
@@ -1370,6 +1397,7 @@ final class BackupManager: ObservableObject {
         udid: String,
         encrypted: Bool = false,
         preferNetwork: Bool = false,
+        configuration: DeviceBackupConfiguration? = nil,
         onProgress: @escaping (String) -> Void
     ) async -> Bool {
         guard let operationID = beginCancellableOperation(udid: udid) else { return false }
@@ -1421,6 +1449,7 @@ final class BackupManager: ObservableObject {
                 directory: backupRoot,
                 full: false,
                 preferNetwork: preferNetwork,
+                configuration: configuration,
                 operationID: operationID,
                 onProgress: onProgress
             )

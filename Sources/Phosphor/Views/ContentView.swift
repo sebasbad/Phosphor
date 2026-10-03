@@ -61,7 +61,8 @@ struct ContentView: View {
                             await backupVM.createBackup(
                                 udid: device.id,
                                 incremental: preflightIncremental,
-                                preferNetwork: preflightPreferNetwork
+                                preferNetwork: preflightPreferNetwork,
+                                configuration: preflightConfig
                             )
                         }
                     }
