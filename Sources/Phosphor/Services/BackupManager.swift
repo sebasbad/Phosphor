@@ -142,45 +142,20 @@ final class BackupManager: ObservableObject {
     private var pymobiledeviceStderrTail: [String] = []
 
     /// Translate a pymobiledevice3 or idevicebackup2 stderr blob into a short actionable hint.
-    private static func diagnostic(for stderr: String) -> (hint: String?, action: RecoveryAction?) {
-        let lower = stderr.lowercased()
-        if lower.contains("not paired") || lower.contains("pairingdialogresponsepending") || lower.contains("trust this computer") {
-            return ("Device is not trusted. Unlock it and tap 'Trust' when prompted, then try again.", .retry)
-        }
-        if lower.contains("passcodesetuprequired") || lower.contains("setpasscode") {
-            return ("Set a passcode on the device before running an encrypted backup.", .retry)
-        }
-        if lower.contains("no device found") || lower.contains("no devices connected") {
-            return ("No device detected. Reconnect the cable and ensure the device is unlocked.", .retry)
-        }
-        if lower.contains("backupdomainoverridden") || lower.contains("mobilebackup2error") {
-            return ("iOS rejected the backup request. Disable/re-enable encryption or reboot the device.", .retry)
-        }
-        if lower.contains("modulenotfounderror") || lower.contains("no module named") {
-            return ("pymobiledevice3 is installed but missing dependencies. Reinstall with: pipx reinstall pymobiledevice3", nil)
-        }
-        if lower.contains("invalidservice") || lower.contains("remotexpc") || lower.contains("tunneld") {
-            return ("Backup requires an up-to-date pymobiledevice3. Upgrade with: pipx upgrade pymobiledevice3", .retry)
-        }
-        if lower.contains("zero-length") || lower.contains("cannot parse a null") || lower.contains("mberrordomain/205") || lower.contains("error reading backup properties") {
-            return ("The existing backup metadata appears incomplete or corrupt. Delete the incomplete backup or choose a fresh local backup folder, then run a full backup with the device unlocked.", .deleteIncompleteAndRunFull)
-        }
-        if lower.contains("is not readable") || lower.contains("permission denied") || lower.contains("operation not permitted") {
-            return ("""
-            macOS is blocking access to the backup directory. The easiest fix is to switch Phosphor's backup directory to a user-owned location:
-            Phosphor -> Settings -> Backup Directory -> ~/Documents/Phosphor Backups.
-            Only if you specifically want Phosphor to read Apple's shared MobileSync backups do you need to grant Full Disk Access (System Settings -> Privacy & Security -> Full Disk Access). Full Disk Access is not recommended - Phosphor does not need it for its own backups.
-            """, .openBackupSettings)
-        }
-        if lower.contains("timed out") {
-            return ("Backup operation timed out. For large backups, ensure a stable high-speed USB connection and keep the device awake.", .retry)
-        }
-        return (nil, nil)
+    static func diagnostic(for stderr: String) -> (hint: String?, action: RecoveryAction?) {
+        BackupDiagnosticClassifier.diagnostic(for: stderr)
     }
 
-    /// Preflight check: verify the active backup directory exists and is readable/writable
-    /// by this process. ~/Library/Application Support/MobileSync/Backup is TCC-protected
-    /// on macOS 10.15+ and requires Full Disk Access for sandboxed or unsigned apps.
+    /// Build a composite error string combining stderr tail and diagnostic hint.
+    static func composeFailureMessage(primary: String, stderr: String) -> String {
+        BackupDiagnosticClassifier.composeFailureMessage(primary: primary, stderr: stderr)
+    }
+
+    static func backupFailure(primary: String, stderr: String, udid: String? = nil, recoveryPath: String? = nil) -> BackupFailure {
+        BackupDiagnosticClassifier.backupFailure(primary: primary, stderr: stderr, udid: udid, recoveryPath: recoveryPath)
+    }
+
+    /// Preflight check: verify the active backup directory exists and is readable/writable.
     static func validateBackupDirectory(_ path: String, createIfMissing: Bool = true) -> (ok: Bool, reason: String?) {
         let fm = FileManager.default
         var isDir: ObjCBool = false
@@ -216,8 +191,6 @@ final class BackupManager: ObservableObject {
         return (true, nil)
     }
 
-    /// Cloud file-provider folders can hydrate files lazily and expose partial
-    /// metadata while syncing. They are risky as the live target for iOS backups.
     static func backupDirectoryWarning(for path: String) -> String? {
         let expanded = (path as NSString).expandingTildeInPath
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -233,33 +206,6 @@ final class BackupManager: ObservableObject {
             return "Cloud-synced folders are not recommended for live iOS backups. Use a local folder, then sync or export completed backups afterward."
         }
         return nil
-    }
-
-    /// Build a composite error string combining stderr tail and diagnostic hint.
-    private static func composeFailureMessage(primary: String, stderr: String) -> String {
-        let failure = backupFailure(primary: primary, stderr: stderr)
-        return [failure.title, failure.message, failure.technicalDetails.map { "Details:\n\($0)" }]
-            .compactMap { $0 }
-            .joined(separator: "\n\n")
-    }
-
-    private static func backupFailure(primary: String, stderr: String, udid: String? = nil, recoveryPath: String? = nil) -> BackupFailure {
-        let trimmed = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
-        let diagnostic = diagnostic(for: trimmed)
-        var lines: [String] = [primary]
-        if let hint = diagnostic.hint { lines.append(hint) }
-        let tail = trimmed.isEmpty ? nil : trimmed
-            .components(separatedBy: "\n")
-            .suffix(stderrTailLineLimit)
-            .joined(separator: "\n")
-        return BackupFailure(
-            title: "Backup Failed",
-            message: lines.joined(separator: "\n\n"),
-            technicalDetails: tail,
-            recoveryAction: diagnostic.action,
-            udid: udid,
-            recoveryPath: recoveryPath
-        )
     }
 
     /// Phosphor's default backup location: inside ~/Documents so no special permission
@@ -324,88 +270,17 @@ final class BackupManager: ObservableObject {
 
     func discoverBackups(at directory: String? = nil) {
         let dir = directory ?? Self.activeBackupDir
-        let fm = FileManager.default
-
-        var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: dir, isDirectory: &isDir) else {
-            backups = []
-            lastError = nil
-            return
-        }
-        guard isDir.boolValue else {
-            backups = []
-            lastError = "\(dir) is not a directory."
-            return
-        }
-
-        // Single-backup case: the chosen dir is itself a UDID backup folder
-        // (contains Info.plist + Manifest.* at its root). Common when a user
-        // points the picker at an individual backup rather than its parent.
-        if Self.looksLikeBackupFolder(dir),
-           let single = BackupInfo.fromDirectory(dir, includeSize: false) {
-            backups = [single]
-            lastError = nil
-            return
-        }
-
-        let contents: [String]
-        do {
-            contents = try fm.contentsOfDirectory(atPath: dir).sorted()
-        } catch {
-            backups = []
-            // TCC denial on ~/Library/Application Support/MobileSync/Backup
-            // surfaces as a permission error here. Tell the user how to fix it.
-            let isMobileSync = (dir == Self.systemMobileSyncDir)
-            var msg = "Cannot read backup directory at \(dir): \(error.localizedDescription)"
-            if isMobileSync {
-                msg += """
-
-
-                macOS protects Apple's MobileSync backups with TCC. Grant Phosphor Full Disk Access:
-                System Settings -> Privacy & Security -> Full Disk Access -> enable Phosphor, then restart the app.
-                Alternatively, copy a backup folder into ~/Documents/Phosphor Backups or use Phosphor > Settings to point at a non-protected location.
-                """
-            }
-            lastError = msg
-            return
-        }
-
-        var discovered: [BackupInfo] = []
-        for item in contents {
-            let fullPath = (dir as NSString).appendingPathComponent(item)
-            var itemIsDir: ObjCBool = false
-            guard fm.fileExists(atPath: fullPath, isDirectory: &itemIsDir), itemIsDir.boolValue else { continue }
-
-            guard Self.looksLikeBackupFolder(fullPath) else { continue }
-
-            if let backup = BackupInfo.fromDirectory(fullPath, includeSize: false) {
-                discovered.append(backup)
-            }
-        }
-
-        backups = discovered.sorted { ($0.lastBackupDate ?? .distantPast) > ($1.lastBackupDate ?? .distantPast) }
-        lastError = nil
+        let result = BackupDiscoveryService.discoverBackups(at: dir)
+        self.backups = result.backups
+        self.lastError = result.error
     }
 
-    /// True when a backup metadata file exists AND has real content. An interrupted
-    /// backup often leaves zero-length Info.plist / Manifest.* stubs; treating those
-    /// as complete makes incremental backups fail with MBErrorDomain/205 (the exact
-    /// "cannot parse null plist" failure the completeness check exists to prevent).
     static func isNonEmptyFile(_ path: String) -> Bool {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-              let size = attributes[.size] as? UInt64 else {
-            return false
-        }
-        return size > 0
+        BackupDiscoveryService.isNonEmptyFile(path)
     }
 
-    /// True when `path` looks like a single iOS backup folder (UDID dir with Info.plist + Manifest.*).
     static func looksLikeBackupFolder(_ path: String) -> Bool {
-        let info = (path as NSString).appendingPathComponent("Info.plist")
-        let manifestPlist = (path as NSString).appendingPathComponent("Manifest.plist")
-        let manifestDb = (path as NSString).appendingPathComponent("Manifest.db")
-        return isNonEmptyFile(info) &&
-               (isNonEmptyFile(manifestPlist) || isNonEmptyFile(manifestDb))
+        BackupDiscoveryService.looksLikeBackupFolder(path)
     }
 
     nonisolated static func backupPath(for udid: String, in directory: String? = nil) -> String {
@@ -413,17 +288,8 @@ final class BackupManager: ObservableObject {
         return (rootDirectory as NSString).appendingPathComponent(udid)
     }
 
-    /// Check whether a device has complete backup metadata, no backup folder,
-    /// or an interrupted partial folder that should be cleaned up before retry.
     static func backupMetadataHealth(for udid: String, in directory: String? = nil) -> BackupMetadataHealth {
-        let deviceDirectory = backupPath(for: udid, in: directory)
-        let fm = FileManager.default
-        var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: deviceDirectory, isDirectory: &isDir) else {
-            return .missing
-        }
-        guard isDir.boolValue else { return .incomplete(path: deviceDirectory) }
-        return looksLikeBackupFolder(deviceDirectory) ? .complete : .incomplete(path: deviceDirectory)
+        BackupDiscoveryService.backupMetadataHealth(for: udid, in: directory ?? activeBackupDir)
     }
 
     /// Incremental backups require an existing valid backup metadata folder for
@@ -474,43 +340,7 @@ final class BackupManager: ObservableObject {
 
     /// True when the incomplete backup folder contains real payload data (hashed directories/files).
     static func incompleteBackupHasPayloadData(_ path: String) -> Bool {
-        let fm = FileManager.default
-        let checkPayloadDir: (String) -> Bool = { dirPath in
-            guard let entries = try? fm.contentsOfDirectory(atPath: dirPath) else { return false }
-            for entry in entries {
-                // iOS stores payload files in 2-hex-character subdirectories (00-ff) or SHA-1 hashes (40 chars)
-                if entry.count == 2 || entry.count == 40 {
-                    let subPath = (dirPath as NSString).appendingPathComponent(entry)
-                    var isDir: ObjCBool = false
-                    if fm.fileExists(atPath: subPath, isDirectory: &isDir) {
-                        if isDir.boolValue {
-                            if let subEntries = try? fm.contentsOfDirectory(atPath: subPath), !subEntries.isEmpty {
-                                return true
-                            }
-                        } else if isNonEmptyFile(subPath) {
-                            return true
-                        }
-                    }
-                }
-            }
-            return false
-        }
-
-        // Check the backup root directory
-        if checkPayloadDir(path) {
-            return true
-        }
-
-        // MobileBackup2 / pymobiledevice3 stores in-flight files in a 'Snapshot/' subdirectory before promotion
-        let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
-        var isSnapshotDir: ObjCBool = false
-        if fm.fileExists(atPath: snapshotPath, isDirectory: &isSnapshotDir), isSnapshotDir.boolValue {
-            if checkPayloadDir(snapshotPath) {
-                return true
-            }
-        }
-
-        return false
+        BackupDiscoveryService.incompleteBackupHasPayloadData(path)
     }
 
     struct IncompleteBackupStats {
@@ -592,217 +422,22 @@ final class BackupManager: ObservableObject {
     }
 
     nonisolated static func incompleteBackupStats(for udid: String, in directory: String? = nil) -> IncompleteBackupStats? {
-        let fm = FileManager.default
-        let path = backupPath(for: udid, in: directory)
-        var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
-
-        // Fast path: if Manifest.db is present and readable via SQLite, query count and total size in milliseconds
-        // instead of crawling hundreds of thousands of files across an external drive.
-        let manifestDbPath = (path as NSString).appendingPathComponent("Manifest.db")
-        if fm.fileExists(atPath: manifestDbPath),
-           let reader = try? SQLiteReader(path: manifestDbPath) {
-            let countQuery = "SELECT count(*) FROM Files WHERE flags = 1"
-            let rowCount: Int? = try? reader.scalar(countQuery)
-            if let rowCount, rowCount > 0 {
-                let modDate = (try? fm.attributesOfItem(atPath: manifestDbPath)[.modificationDate]) as? Date
-                // Try to get total file size if recorded, otherwise estimate ~100KB per file
-                let sizeQuery = "SELECT sum(length(file)) FROM Files WHERE flags = 1"
-                let metadataBytes: Int? = try? reader.scalar(sizeQuery)
-                let estimatedBytes = UInt64(metadataBytes ?? (rowCount * 100_000))
-                return IncompleteBackupStats(fileCount: rowCount, totalBytes: estimatedBytes, lastModified: modDate)
-            }
-        }
-
-        let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
-        let targetDir = fm.fileExists(atPath: snapshotPath, isDirectory: &isDir) && isDir.boolValue ? snapshotPath : path
-
-        var count = 0
-        var totalBytes: UInt64 = 0
-        var latestDate: Date?
-
-        guard let subdirs = try? fm.contentsOfDirectory(atPath: targetDir) else { return nil }
-        for sub in subdirs where sub.count == 2 || sub.count == 40 {
-            if Task.isCancelled { return nil }
-            let subPath = (targetDir as NSString).appendingPathComponent(sub)
-            if let files = try? fm.contentsOfDirectory(atPath: subPath) {
-                count += files.count
-                for file in files {
-                    if Task.isCancelled { return nil }
-                    let filePath = (subPath as NSString).appendingPathComponent(file)
-                    if let attrs = try? fm.attributesOfItem(atPath: filePath) {
-                        if let size = attrs[.size] as? UInt64 {
-                            totalBytes += size
-                        }
-                        if let mod = attrs[.modificationDate] as? Date {
-                            if latestDate == nil || mod > latestDate! {
-                                latestDate = mod
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        guard count > 0 || totalBytes > 0 else { return nil }
-        return IncompleteBackupStats(fileCount: count, totalBytes: totalBytes, lastModified: latestDate)
+        BackupDiscoveryService.incompleteBackupStats(for: udid, in: directory ?? activeBackupDir)
     }
 
-    /// Samples the currently written domain by finding the most recently modified
-    /// file in the active backup directory and resolving its domain from Manifest.db.
-    /// Returns nil if no Manifest.db exists yet or if the file cannot be mapped.
     nonisolated static func sampleActiveDomain(for udid: String, in directory: String? = nil) -> String? {
-        let fm = FileManager.default
-        let path = backupPath(for: udid, in: directory)
-        var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
-
-        let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
-        let targetDir = fm.fileExists(atPath: snapshotPath, isDirectory: &isDir) && isDir.boolValue ? snapshotPath : path
-
-        guard let subdirs = try? fm.contentsOfDirectory(atPath: targetDir) else { return nil }
-        var newestFileID: String?
-        var newestDate: Date?
-
-        // Check a bounded sample of recent entries without doing an exhaustive recursive walk
-        var sampledSubdirs = 0
-        for sub in subdirs where sub.count == 2 {
-            if Task.isCancelled { return nil }
-            sampledSubdirs += 1
-            if sampledSubdirs > 10 { break }
-            let subPath = (targetDir as NSString).appendingPathComponent(sub)
-            guard let files = try? fm.contentsOfDirectory(atPath: subPath) else { continue }
-            for file in files {
-                if Task.isCancelled { return nil }
-                let filePath = (subPath as NSString).appendingPathComponent(file)
-                if let attrs = try? fm.attributesOfItem(atPath: filePath),
-                   let mod = attrs[.modificationDate] as? Date {
-                    if newestDate == nil || mod > newestDate! {
-                        newestDate = mod
-                        newestFileID = file
-                    }
-                }
-            }
-        }
-
-        guard let fileID = newestFileID else { return nil }
-        guard let manifest = try? BackupManifest(backupPath: path) else { return nil }
-        return manifest.entry(withFileID: fileID)?.domain
+        BackupDiscoveryService.sampleActiveDomain(for: udid, in: directory ?? activeBackupDir)
     }
 
-    /// Sanitize an interrupted backup folder before resuming to prevent com.apple.mobilebackup2
-    /// and idevicebackup2 / pymobiledevice3 from failing with MBErrorDomain/205 ("cannot parse null plist").
-    /// - Checks and cleans up 0-byte or corrupted plist stubs (Status.plist, Info.plist).
     struct SanitizeResult: Sendable, Equatable {
         let filesScanned: Int
         let filesCleaned: Int
         let walCheckpointed: Bool
     }
 
-    /// Sanitize an interrupted backup folder before resuming to prevent com.apple.mobilebackup2
-    /// and idevicebackup2 / pymobiledevice3 from failing with MBErrorDomain/205 ("cannot parse null plist").
-    /// - Checks and cleans up 0-byte or corrupted plist stubs (Status.plist, Info.plist).
-    /// - Performs SQLite WAL checkpoint and removes stale lock files (Manifest.db-wal, Manifest.db-shm).
-    /// - Removes transient staging or temp files.
     @discardableResult
     static func sanitizeIncompleteBackup(at path: String) -> SanitizeResult {
-        let fm = FileManager.default
-        var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else {
-            return SanitizeResult(filesScanned: 0, filesCleaned: 0, walCheckpointed: false)
-        }
-
-        var scanned = 0
-        var cleaned = 0
-        var walCheckpointed = false
-
-        // 1. Remove 0-byte or unparseable Status.plist so mobilebackup2 starts a clean phase
-        let statusPath = (path as NSString).appendingPathComponent("Status.plist")
-        if fm.fileExists(atPath: statusPath) {
-            scanned += 1
-            if !isNonEmptyFile(statusPath) {
-                if (try? fm.removeItem(atPath: statusPath)) != nil { cleaned += 1 }
-            } else if let data = try? Data(contentsOf: URL(fileURLWithPath: statusPath)),
-                      (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) == nil {
-                if (try? fm.removeItem(atPath: statusPath)) != nil { cleaned += 1 }
-            }
-        }
-
-        // 2. Remove 0-byte Info.plist if unparseable
-        let infoPath = (path as NSString).appendingPathComponent("Info.plist")
-        if fm.fileExists(atPath: infoPath) {
-            scanned += 1
-            if !isNonEmptyFile(infoPath) {
-                if (try? fm.removeItem(atPath: infoPath)) != nil { cleaned += 1 }
-            } else if let data = try? Data(contentsOf: URL(fileURLWithPath: infoPath)),
-                      (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) == nil {
-                if (try? fm.removeItem(atPath: infoPath)) != nil { cleaned += 1 }
-            }
-        }
-
-        // 3. Remove 0-byte Manifest.plist if unparseable
-        let manifestPlistPath = (path as NSString).appendingPathComponent("Manifest.plist")
-        if fm.fileExists(atPath: manifestPlistPath) {
-            scanned += 1
-            if !isNonEmptyFile(manifestPlistPath) {
-                if (try? fm.removeItem(atPath: manifestPlistPath)) != nil { cleaned += 1 }
-            } else if let data = try? Data(contentsOf: URL(fileURLWithPath: manifestPlistPath)),
-                      (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) == nil {
-                if (try? fm.removeItem(atPath: manifestPlistPath)) != nil { cleaned += 1 }
-            }
-        }
-
-        // 4. Checkpoint SQLite Manifest.db if WAL sidecars exist
-        let manifestDbPath = (path as NSString).appendingPathComponent("Manifest.db")
-        let walPath = (path as NSString).appendingPathComponent("Manifest.db-wal")
-        let shmPath = (path as NSString).appendingPathComponent("Manifest.db-shm")
-        if fm.fileExists(atPath: manifestDbPath) && isNonEmptyFile(manifestDbPath) {
-            scanned += 1
-            if fm.fileExists(atPath: walPath) || fm.fileExists(atPath: shmPath) {
-                scanned += (fm.fileExists(atPath: walPath) ? 1 : 0) + (fm.fileExists(atPath: shmPath) ? 1 : 0)
-                // Execute a quick truncate checkpoint if possible via sqlite3
-                var dbPointer: OpaquePointer?
-                if sqlite3_open(manifestDbPath, &dbPointer) == SQLITE_OK, let db = dbPointer {
-                    var logFrames: Int32 = 0
-                    var ckptFrames: Int32 = 0
-                    if sqlite3_wal_checkpoint_v2(db, nil, SQLITE_CHECKPOINT_TRUNCATE, &logFrames, &ckptFrames) == SQLITE_OK {
-                        walCheckpointed = true
-                    }
-                    sqlite3_close(db)
-                }
-                // If WAL is still 0-bytes or leftover, remove it
-                if fm.fileExists(atPath: walPath) && !isNonEmptyFile(walPath) {
-                    if (try? fm.removeItem(atPath: walPath)) != nil { cleaned += 1 }
-                }
-                if fm.fileExists(atPath: shmPath) && !isNonEmptyFile(shmPath) {
-                    if (try? fm.removeItem(atPath: shmPath)) != nil { cleaned += 1 }
-                }
-            }
-        } else if fm.fileExists(atPath: manifestDbPath) && !isNonEmptyFile(manifestDbPath) {
-            scanned += 1
-            // A zero-byte Manifest.db will cause sqlite3 / mobilebackup2 to fail
-            if (try? fm.removeItem(atPath: manifestDbPath)) != nil { cleaned += 1 }
-            if fm.fileExists(atPath: walPath) {
-                scanned += 1
-                if (try? fm.removeItem(atPath: walPath)) != nil { cleaned += 1 }
-            }
-            if fm.fileExists(atPath: shmPath) {
-                scanned += 1
-                if (try? fm.removeItem(atPath: shmPath)) != nil { cleaned += 1 }
-            }
-        }
-
-        // 5. Clean up leftover temporary/partial download files (.tmp, .staging)
-        if let entries = try? fm.contentsOfDirectory(atPath: path) {
-            for entry in entries where entry.hasSuffix(".tmp") || entry.hasSuffix(".staging") {
-                scanned += 1
-                if (try? fm.removeItem(atPath: (path as NSString).appendingPathComponent(entry))) != nil {
-                    cleaned += 1
-                }
-            }
-        }
-
-        return SanitizeResult(filesScanned: scanned, filesCleaned: cleaned, walCheckpointed: walCheckpointed)
+        BackupDiscoveryService.sanitizeIncompleteBackup(at: path)
     }
 
     // MARK: - Backup Creation
@@ -1648,65 +1283,14 @@ final class BackupManager: ObservableObject {
 
     // MARK: - Selective Extract
 
-    /// Build the destination path for one manifest entry, relative to the folder
-    /// the user chose. Returned as a relative path so the caller can resolve it
-    /// through SafeExtractionPath, which is what actually enforces the boundary.
-    private func extractionRelativePath(for entry: BackupManifest.FileEntry) -> String {
-        var safeDomain = entry.domain
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
-        // A crafted/corrupt Manifest.db row could set domain to "." or ".." to walk
-        // out of the destination directory. Slashes are already neutralized above, so
-        // only the bare current-/parent-dir tokens remain dangerous.
-        if safeDomain == "." || safeDomain == ".." || safeDomain.isEmpty {
-            safeDomain = "_"
-        }
-        var components = [safeDomain]
-        let relativeComponents = entry.relativePath
-            .split(separator: "/")
-            .map(String.init)
-            .filter { !$0.isEmpty && $0 != "." && $0 != ".." }
-        components += relativeComponents
-
-        if relativeComponents.isEmpty || entry.relativePath.hasSuffix("/") {
-            components.append(entry.fileName)
-        }
-        return components.joined(separator: "/")
-    }
-
     func extractFiles(
         from backup: BackupInfo,
         entries: [BackupManifest.FileEntry],
         to destination: String
     ) throws -> Int {
-        let manifest = try BackupManifest(backupPath: backup.path)
-        var extracted = 0
-
-        // Lexical sanitization alone is not enough: extractFile creates missing
-        // parents with withIntermediateDirectories, which follows a symlink already
-        // sitting in the chosen folder and writes straight through it. SafeExtractionPath
-        // rejects symlinked components and re-checks containment against the resolved root.
-        let root = URL(fileURLWithPath: destination, isDirectory: true)
-        let fm = FileManager.default
-
-        for entry in entries where entry.isFile {
-            guard let destination = try? SafeExtractionPath.prepareDestination(
-                root: root,
-                relativePath: extractionRelativePath(for: entry),
-                fileManager: fm
-            ) else {
-                lastError = "Refusing to extract \(entry.fileName) outside the destination folder."
-                continue
-            }
-            do {
-                try manifest.extractFile(entry, to: destination.path)
-                extracted += 1
-            } catch {
-                lastError = "Failed to extract \(entry.fileName): \(error.localizedDescription)"
-            }
+        try BackupExtractionService.extractFiles(from: backup, entries: entries, to: destination) { [weak self] errorMsg in
+            self?.lastError = errorMsg
         }
-
-        return extracted
     }
 
     func extractDomain(
@@ -1714,65 +1298,33 @@ final class BackupManager: ObservableObject {
         domain: String,
         to destination: String
     ) throws -> Int {
-        let manifest = try BackupManifest(backupPath: backup.path)
-        let files = try manifest.files(inDomain: domain)
-        return try extractFiles(from: backup, entries: files, to: destination)
+        try BackupExtractionService.extractDomain(from: backup, domain: domain, to: destination) { [weak self] errorMsg in
+            self?.lastError = errorMsg
+        }
     }
 
     // MARK: - Encryption
 
     func enableEncryption(udid: String, password: String) async -> Bool {
-        await setBackupEncryption(udid: udid, enabled: true, password: password)
+        let (success, error) = await BackupEncryptionService.setBackupEncryption(udid: udid, enabled: true, password: password)
+        if !success { lastError = error }
+        return success
     }
 
     func disableEncryption(udid: String, password: String) async -> Bool {
-        await setBackupEncryption(udid: udid, enabled: false, password: password)
+        let (success, error) = await BackupEncryptionService.setBackupEncryption(udid: udid, enabled: false, password: password)
+        if !success { lastError = error }
+        return success
     }
 
-    /// Toggle backup encryption without leaking the password through the process
-    /// argument list. idevicebackup2 reads the password from the BACKUP_PASSWORD
-    /// environment variable, which - unlike an argv value - is not printed by
-    /// `ps -axww`. pymobiledevice3 accepts these passwords only as positional CLI
-    /// arguments, so a failed secure invocation deliberately fails closed.
-    private func setBackupEncryption(udid: String, enabled: Bool, password: String) async -> Bool {
-        let mode = enabled ? "on" : "off"
-        let result = await Shell.runAsync(
-            "idevicebackup2",
-            arguments: ["-u", udid, "encryption", mode],
-            extraEnvironment: ["BACKUP_PASSWORD": password]
-        )
-        guard result.succeeded else {
-            lastError = "Could not change backup encryption without exposing the password on the command line. Ensure idevicebackup2 is installed and try again."
-            return false
-        }
-        return true
-    }
-
-    /// Change the backup password using idevicebackup2's environment-variable
-    /// interface. pymobiledevice3 only accepts both passwords in argv, so a
-    /// failure here is reported rather than falling back to an unsafe command.
     func changeEncryptionPassword(udid: String, oldPassword: String, newPassword: String) async -> Bool {
-        let result = await Shell.runAsync(
-            "idevicebackup2",
-            arguments: ["-u", udid, "changepw"],
-            extraEnvironment: [
-                "BACKUP_PASSWORD": oldPassword,
-                "BACKUP_PASSWORD_NEW": newPassword,
-            ]
-        )
-        guard result.succeeded else {
-            lastError = "Could not change the backup password without exposing it on the command line. Ensure idevicebackup2 is installed and try again."
-            return false
-        }
-        return true
+        let (success, error) = await BackupEncryptionService.changeEncryptionPassword(udid: udid, oldPassword: oldPassword, newPassword: newPassword)
+        if !success { lastError = error }
+        return success
     }
 
     func isEncryptionEnabled(udid: String) async -> Bool {
-        if PyMobileDevice.available() {
-            return await PyMobileDevice.encryptionStatus(udid: udid)
-        }
-        let result = await Shell.runAsync("idevicebackup2", arguments: ["-u", udid, "encryption"])
-        return result.output.contains("on")
+        await BackupEncryptionService.isEncryptionEnabled(udid: udid)
     }
 
     // MARK: - Cleanup

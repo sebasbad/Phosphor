@@ -616,7 +616,7 @@ final class BackupViewModel: ObservableObject {
             var lines: [String] = []
             lines.append("Device: \(backup.deviceName) (\(backup.modelName))")
             lines.append("Identifier: \(backup.deviceIdentityLabel)")
-            lines.append("Status: \(backup.isFullBackup ? "Complete backup" : "Preserved partial backup (resumable)")")
+            lines.append("Status: \(backup.isComplete ? (backup.isFullBackup ? "Complete (Full backup)" : "Complete (Incremental backup)") : "Preserved partial backup (resumable)")")
             lines.append("Path: \(backup.path)")
             lines.append("Last modified: \(backup.dateString) (\(backup.relativeDate))")
             lines.append("Size on disk: \(backup.sizeResolved ? backup.sizeString : "Calculating...")")

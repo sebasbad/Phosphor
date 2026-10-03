@@ -13,6 +13,8 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
     let lastBackupDate: Date?
     let isEncrypted: Bool
     let isFullBackup: Bool
+    let isComplete: Bool
+    let snapshotState: String
     let size: UInt64
     let sizeResolved: Bool
     let appCount: Int
@@ -79,6 +81,16 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
         let manifest = PlistParser.parseManifest(path)
         let size = includeSize ? FileManager.default.directorySize(at: path) : 0
 
+        let snapshotState = status?.snapshotState ?? ""
+        let manifestDbPath = (path as NSString).appendingPathComponent("Manifest.db")
+        let manifestPlistPath = (path as NSString).appendingPathComponent("Manifest.plist")
+        let fm = FileManager.default
+        let hasValidManifest = (fm.fileExists(atPath: manifestDbPath) && ((try? fm.attributesOfItem(atPath: manifestDbPath)[.size] as? UInt64) ?? 0) > 0) ||
+                               (fm.fileExists(atPath: manifestPlistPath) && ((try? fm.attributesOfItem(atPath: manifestPlistPath)[.size] as? UInt64) ?? 0) > 0)
+        
+        // Strict invariant: A backup is ONLY complete if both metadata is sealed AND SnapshotState reports finished
+        let isComplete = hasValidManifest && (snapshotState.lowercased() == "finished")
+
         return BackupInfo(
             id: dirName,
             path: path,
@@ -91,6 +103,8 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
             lastBackupDate: info.lastBackupDate ?? status?.date,
             isEncrypted: manifest?.isEncrypted ?? info.isEncrypted,
             isFullBackup: status?.isFullBackup ?? false,
+            isComplete: isComplete,
+            snapshotState: snapshotState,
             size: size,
             sizeResolved: includeSize,
             appCount: manifest?.applicationBundleIds.count ?? 0
@@ -110,6 +124,8 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
             lastBackupDate: lastBackupDate,
             isEncrypted: isEncrypted,
             isFullBackup: isFullBackup,
+            isComplete: isComplete,
+            snapshotState: snapshotState,
             size: size,
             sizeResolved: true,
             appCount: appCount
