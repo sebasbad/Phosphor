@@ -1164,74 +1164,26 @@ final class BackupManager: ObservableObject {
             markOperationCancelled(operationID, progress: "Restore cancelled")
             return false
         }
-        // Primary: pymobiledevice3
-        if PyMobileDevice.available() {
-            return await withCheckedContinuation { continuation in
-                guard !operationWasCancelled(operationID) else {
-                    markOperationCancelled(operationID, progress: "Restore cancelled")
-                    continuation.resume(returning: false)
-                    return
-                }
-                activeProcess = PyMobileDevice.restore(
-                    directory: backupRoot,
-                    udid: targetUDID,
-                    sourceUDID: sourceIdentifier,
-                    timeout: Self.streamingRestoreTimeout,
-                    onOutput: { output in onProgress(output) },
-                    completion: { [weak self] exitCode in
-                        Task { @MainActor in
-                            guard let self else {
-                                continuation.resume(returning: exitCode == 0)
-                                return
-                            }
-                            if self.operationWasCancelled(operationID) {
-                                await self.awaitCancellationDrain(operationID)
-                                self.markOperationCancelled(operationID, progress: "Restore cancelled")
-                                continuation.resume(returning: false)
-                                return
-                            }
-                            self.finishOperation(operationID)
-                            continuation.resume(returning: exitCode == 0)
-                        }
-                    }
-                )
-            }
-        }
 
-        // Fallback: idevicebackup2
-        return await withCheckedContinuation { continuation in
-            guard !operationWasCancelled(operationID) else {
-                markOperationCancelled(operationID, progress: "Restore cancelled")
-                continuation.resume(returning: false)
-                return
-            }
-            activeProcess = Shell.runStreaming(
-                "idevicebackup2",
-                // Global options first, then the subcommand, then its options. The
-                // --reboot matches the pymobiledevice3 path and the confirmation
-                // dialog, which both tell the user the device restarts.
-                arguments: ["-u", targetUDID, "-s", sourceIdentifier, "restore", "--system", "--reboot", backupRoot],
-                timeout: Self.streamingRestoreTimeout,
-                onOutput: { output in onProgress(output) },
-                onError: { _ in },
-                completion: { [weak self] exitCode in
-                    Task { @MainActor in
-                        guard let self else {
-                            continuation.resume(returning: exitCode == 0)
-                            return
-                        }
-                        if self.operationWasCancelled(operationID) {
-                            await self.awaitCancellationDrain(operationID)
-                            self.markOperationCancelled(operationID, progress: "Restore cancelled")
-                            continuation.resume(returning: false)
-                            return
-                        }
-                        self.finishOperation(operationID)
-                        continuation.resume(returning: exitCode == 0)
-                    }
-                }
-            )
+        let success = await BackupRestoreService.executeRestore(
+            backup: backup,
+            targetUDID: targetUDID,
+            onProcessSpawned: { [weak self] proc in
+                Task { @MainActor in self?.activeProcess = proc }
+            },
+            isCancelled: { [weak self] in
+                self?.operationWasCancelled(operationID) == true
+            },
+            onProgress: onProgress
+        )
+
+        if operationWasCancelled(operationID) {
+            await awaitCancellationDrain(operationID)
+            markOperationCancelled(operationID, progress: "Restore cancelled")
+            return false
         }
+        finishOperation(operationID)
+        return success
     }
 
     /// Cancel an active backup/restore.
