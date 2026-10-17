@@ -378,8 +378,8 @@ def test_cancellation_token_model_prevents_cancelled_primary_from_starting_fallb
 def test_backup_inhibits_cascading_fallback_on_timeout_and_unsupported_targets(root: Path) -> None:
     manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
     assert "shouldInhibitFallback" in manager, "backup manager should guard against falling back to idevicebackup2 on non-recoverable failures"
-    assert 'lowerStderr.contains("timed out")' in manager, "timed out pymobiledevice3 backups must not cascade to idevicebackup2"
-    assert 'lowerStderr.contains("remotexpc")' in manager, "RemoteXPC requirement on iOS 17+ must not cascade to idevicebackup2"
+    assert 'lower.contains("timed out")' in manager, "timed out pymobiledevice3 backups must not cascade to idevicebackup2"
+    assert 'lower.contains("remotexpc")' in manager, "RemoteXPC requirement on iOS 17+ must not cascade to idevicebackup2"
     assert "streamTerminationGrace: TimeInterval = 5.0" in read(root, "Sources/Phosphor/Utilities/Shell.swift"), "grace period must allow Python multiprocessing cleanup"
 
 
