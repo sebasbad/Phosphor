@@ -939,3 +939,10 @@ def test_global_concurrent_backup_accessibility_names_each_device_and_progress(r
     assert_contains(activity_list, ".accessibilityElement(children: .combine)", "each global backup status container should be one VoiceOver element")
     assert_contains(activity_list, ".accessibilityLabel(\"\\(deviceIdentity(for: activity.udid)), \\(activity.displayProgressText)\")", "global status must announce the device identity and current progress")
     assert_contains(activity_list, ".accessibilityLabel(\"Cancel backup for \\(deviceIdentity(for: activity.udid))\")", "same-name concurrent backups need device-specific cancel labels")
+
+
+def test_parse_backup_info_falls_back_to_manifest_lockdown_when_info_plist_is_corrupt(root: Path) -> None:
+    parser = read(root, "Sources/Phosphor/Utilities/PlistParser.swift")
+    assert_contains(parser, 'manifest["Lockdown"]', "PlistParser.parseBackupInfo should fall back to Manifest.plist Lockdown when Info.plist is truncated")
+    assert_contains(parser, 'lockdown["UniqueDeviceID"]', "PlistParser fallback should read UniqueDeviceID from Lockdown")
+
