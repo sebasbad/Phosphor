@@ -10,7 +10,11 @@ def read(root: Path, rel: str) -> str:
 
 def test_manifest_integrity_report_is_wired(root: Path) -> None:
     manifest = read(root, "Sources/Phosphor/Utilities/BackupManifest.swift")
-    manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    manager = (
+        read(root, "Sources/Phosphor/Services/BackupManager.swift")
+        + "\n"
+        + read(root, "Sources/Phosphor/Services/BackupManager+Resumable.swift")
+    )
     for token in [
         "struct IntegrityReport",
         "func integrityReport(blobSampleLimit:",
