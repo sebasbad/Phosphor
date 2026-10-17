@@ -748,37 +748,38 @@ enum Shell {
         }
     }
 
-    /// Fast variant for user-initiated cancellation ("Pause & Save").
-    /// Strategy: SIGTERM the group → 0.5 s grace → SIGKILL the group →
-    /// blocking reap of the session leader. This bypasses the
-    /// `processGroupExists` poll which stays true while Python's
-    /// `multiprocessing.resource_tracker` child lingers as a zombie
-    /// (the OS won't return ESRCH until every zombie in the group is reaped
-    /// and we only reap the root). We only need the leader gone to release
-    /// the operation lease; remaining children are adopted by launchd.
+    /// Cooperative cancellation for user-initiated stop ("Pause & Save").
+    /// Polls `reapIfExited(pid)` up to `streamTerminationGrace` (5.0s) so
+    /// cooperative tools exit as soon as they finish flushing (typically <100ms)
+    /// without waiting for zombie `resource_tracker` children, while still
+    /// allowing full flush time before escalating to SIGKILL.
     static func cancelAndWait(_ process: ManagedProcess) async {
         let pid = process.processIdentifier
         guard pid > 0 else { return }
-        let startTime = Date()
-        NSLog("[Phosphor:PauseTrace] cancelAndWait initiated for pid %d", pid)
         let processTree = process.processTree
 
-        // 1. Cooperative shutdown: give the tool a chance to checkpoint.
+        // 1. Cooperative shutdown: give the tool up to streamTerminationGrace to flush & exit.
         terminateProcessTree(processTree, signal: SIGTERM)
-        NSLog("[Phosphor:PauseTrace] pid %d sent SIGTERM, waiting 0.5s grace", pid)
-        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 s
+        let deadline = Date().addingTimeInterval(streamTerminationGrace)
+        var leaderExited = false
+        while Date() < deadline {
+            if reapIfExited(pid) {
+                leaderExited = true
+                break
+            }
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms poll
+        }
 
-        // 2. Force-kill the whole process group unconditionally.
-        terminateProcessTree(processTree, signal: SIGKILL)
-        NSLog("[Phosphor:PauseTrace] pid %d sent SIGKILL", pid)
+        // 2. Escalate to SIGKILL for any remaining processes in the group.
+        if !leaderExited {
+            terminateProcessTree(processTree, signal: SIGKILL)
+            _ = reapWithinDeadline(pid, timeout: 1.0)
+        } else {
+            terminateProcessTree(processTree, signal: SIGKILL)
+        }
 
-        // 3. Immediately tear down streaming readability handlers and signal finish.
+        // 3. Tear down streaming readability handlers and signal finish.
         process.notifyCancel()
-
-        // 4. Reap the session leader. Bounded so a zombie never blocks forever.
-        let reaped = reapWithinDeadline(pid, timeout: 1.0)
-        let elapsed = Date().timeIntervalSince(startTime)
-        NSLog("[Phosphor:PauseTrace] pid %d reap result: %d in %.3fs", pid, reaped ? 1 : 0, elapsed)
     }
 
     /// Check if a command-line tool is available.
