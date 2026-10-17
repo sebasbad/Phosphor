@@ -46,3 +46,18 @@ def test_readiness_center_supports_resumable_backups(root: Path) -> None:
     assert_contains(view_src, 'Label("Resume Backup", systemImage: "play.circle.fill")', "ReadinessCenterView must offer Resume Backup button")
     assert_contains(view_src, "case .resumeBackup", "ReadinessCenterView must handle resumeBackup recovery operation")
     assert_contains(view_src, "backupVM.resumeBackup", "ReadinessCenterView must call backupVM.resumeBackup")
+
+
+def test_upstream_feedback_invariants(root: Path) -> None:
+    tracker = read(root, "Sources/Phosphor/Utilities/FinalizationProgressTracker.swift")
+    assert "593_000" not in tracker, "FinalizationProgressTracker must not hardcode test-device file counts"
+    assert "remBuckets * 3" not in tracker, "FinalizationProgressTracker must compute verification ETA from observed bucket rate"
+
+    shell = read(root, "Sources/Phosphor/Utilities/Shell.swift")
+    assert "500_000_000" not in shell, "cancelAndWait must not force-kill after 0.5s"
+    assert_contains(shell, "Date().addingTimeInterval(streamTerminationGrace)", "cancelAndWait must give cooperative tools up to streamTerminationGrace before SIGKILL")
+
+    manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    vm = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+    assert 'lower.contains("pin")' not in manager and 'lower.contains("pin")' not in vm, "passcode prompt detection must not match 'Skipping' via bare 'pin' substring"
+

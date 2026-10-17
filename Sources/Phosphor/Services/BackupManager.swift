@@ -782,6 +782,12 @@ final class BackupManager: ObservableObject {
         guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else {
             return SanitizeResult(filesScanned: 0, filesCleaned: 0, walCheckpointed: false)
         }
+        // Do not touch a backup that already completed with no leftover WAL/SHM sidecars.
+        let walFile = (path as NSString).appendingPathComponent("Manifest.db-wal")
+        let shmFile = (path as NSString).appendingPathComponent("Manifest.db-shm")
+        if looksLikeBackupFolder(path) && !fm.fileExists(atPath: walFile) && !fm.fileExists(atPath: shmFile) {
+            return SanitizeResult(filesScanned: 0, filesCleaned: 0, walCheckpointed: false)
+        }
 
         var scanned = 0
         var cleaned = 0
@@ -1183,7 +1189,7 @@ final class BackupManager: ObservableObject {
                         let l = line.trimmingCharacters(in: .whitespacesAndNewlines)
                         if l.isEmpty { continue }
                         let lower = l.lowercased()
-                        if lower.contains("passcode") || lower.contains("pin") || lower.contains("trust") || lower.contains("unlock") || lower.contains("pair") {
+                        if lower.contains("passcode") || lower.contains("enter pin") || lower.contains("trust this computer") || lower.contains("unlock") || lower.contains("not paired") {
                             self.backupProgress = l
                             onProgress(l)
                         }
@@ -1464,6 +1470,10 @@ final class BackupManager: ObservableObject {
         }
 
         let pymobiledeviceStderr = pymobiledeviceStderrTail.joined(separator: "\n")
+        if Self.shouldInhibitFallback(stderr: pymobiledeviceStderr) {
+            failWithoutFallback(operationID: operationID, udid: udid, backupRoot: backupRoot, primary: "Resume backup failed.", stderr: pymobiledeviceStderr)
+            return false
+        }
         let fallbackReason = pymobiledeviceStderr.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "\n").last ?? "pymobiledevice3 failed"
         onProgress("Fallback: \(fallbackReason)")
 

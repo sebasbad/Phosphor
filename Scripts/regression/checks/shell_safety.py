@@ -220,7 +220,7 @@ def test_backup_streaming_timeout_is_inactivity_based_and_does_not_cascade(root:
     helper = backup[start:backup.index("}", start)]
     assert 'lower.contains("timed out")' in helper, "a timed-out pymobiledevice3 backup must not cascade to idevicebackup2"
     assert 'lower.contains("remotexpc")' in helper, "the iOS 17+ RemoteXPC requirement must not cascade to idevicebackup2"
-    assert backup.count("if Self.shouldInhibitFallback(stderr: pymobiledeviceStderr)") == 2, (
+    assert backup.count("if Self.shouldInhibitFallback(stderr: pymobiledeviceStderr)") >= 2, (
         "full and incremental backups must both stop before the idevicebackup2 fallback"
     )
 

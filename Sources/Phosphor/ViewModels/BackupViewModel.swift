@@ -995,11 +995,10 @@ final class BackupViewModel: ObservableObject {
     private func updateBackupProgress(udid: String, text: String, manager: BackupManager) {
         let lower = text.lowercased()
         let awaitingPasscode = lower.contains("passcode")
-            || lower.contains("pin")
-            || lower.contains("trust")
+            || lower.contains("enter pin")
+            || lower.contains("trust this computer")
             || lower.contains("unlock")
             || lower.contains("not paired")
-            || lower.contains("pairing")
         var transferredBytes: Int64?
         var totalBytes: Int64?
         updateActivity(udid: udid) { activity in
