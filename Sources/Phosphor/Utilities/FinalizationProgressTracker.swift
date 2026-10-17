@@ -44,6 +44,9 @@ final class FinalizationProgressTracker: @unchecked Sendable {
     private let udid: String
     private var lastSampleEpoch: TimeInterval?
     private var lastFilesMoved: Int?
+    private var lastVerifyEpoch: TimeInterval?
+    private var lastVerifiedBuckets: Int?
+    private var knownTotalFiles: Int = 0
 
     init(backupDirectory: String, udid: String) {
         self.backupDirectory = backupDirectory
@@ -79,13 +82,30 @@ final class FinalizationProgressTracker: @unchecked Sendable {
             let verified = max(scanned, 1)
             let fraction = Double(verified) / 256.0
             let remBuckets = max(256 - verified, 0)
-            let eta = TimeInterval(remBuckets * 3) // ~3s per bucket
+            var eta: TimeInterval?
+            if let prevEpoch = lastVerifyEpoch, let prevBuckets = lastVerifiedBuckets {
+                let dt = now - prevEpoch
+                let dBuckets = verified - prevBuckets
+                if dt >= 2.0 && dBuckets > 0 {
+                    let bucketsPerSec = Double(dBuckets) / dt
+                    eta = Double(remBuckets) / bucketsPerSec
+                }
+            }
+            lastVerifyEpoch = now
+            lastVerifiedBuckets = verified
+
+            if knownTotalFiles == 0 {
+                let rootBucket = (deviceDir as NSString).appendingPathComponent("00")
+                if let count = try? fm.contentsOfDirectory(atPath: rootBucket).count, count > 0 {
+                    knownTotalFiles = count * 256
+                }
+            }
 
             return Metrics(
                 stage: .verifying(scannedBuckets: verified, totalBuckets: 256),
-                filesMoved: 593_000,
+                filesMoved: knownTotalFiles,
                 filesRemaining: 0,
-                totalFiles: 593_000,
+                totalFiles: knownTotalFiles,
                 phaseFraction: fraction,
                 speedFilesPerSec: nil,
                 etaSeconds: eta
@@ -109,6 +129,7 @@ final class FinalizationProgressTracker: @unchecked Sendable {
         let filesMoved = rootCount * 256
         let filesRemaining = snapCount * 256
         let totalFiles = totalSample * 256
+        knownTotalFiles = totalFiles
         let phaseFraction = Double(rootCount) / Double(totalSample)
 
         let now = Date().timeIntervalSince1970
