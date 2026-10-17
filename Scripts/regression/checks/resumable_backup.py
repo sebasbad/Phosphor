@@ -12,7 +12,11 @@ def assert_contains(text: str, needle: str, message: str) -> None:
 
 
 def test_backup_manager_has_resume_and_sanitization_helpers(root: Path) -> None:
-    src = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    src = (
+        read(root, "Sources/Phosphor/Services/BackupManager.swift")
+        + "\n"
+        + read(root, "Sources/Phosphor/Services/BackupManager+Resumable.swift")
+    )
     assert_contains(src, "case resumeBackup", "RecoveryAction must support resumeBackup")
     assert_contains(src, "func resumeIncompleteBackup", "BackupManager must implement resumeIncompleteBackup")
     assert_contains(src, "static func incompleteBackupHasPayloadData", "BackupManager must detect payload data in incomplete backups")

@@ -239,7 +239,11 @@ def test_phase_signals_and_terminal_summary(root: Path) -> None:
     """BackupManager emits real sanitization and fallback reason signals;
     BackupViewModel and Coordinator track them in PhaseContext and surface
     honest PhaseDetail cases including terminal summary upon completion."""
-    manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    manager = (
+        read(root, "Sources/Phosphor/Services/BackupManager.swift")
+        + "\n"
+        + read(root, "Sources/Phosphor/Services/BackupManager+Resumable.swift")
+    )
     types = read(root, "Sources/Phosphor/Utilities/BackupObservabilityTypes.swift")
     coord = read(root, "Sources/Phosphor/Utilities/BackupObservabilityCoordinator.swift")
     model = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
@@ -273,7 +277,11 @@ def test_phase_signals_and_terminal_summary(root: Path) -> None:
 def test_current_domain_sampling(root: Path) -> None:
     """BackupManager samples recently written files and checks Manifest.db;
     BackupViewModel liveness monitor samples domain and feeds PhaseContext."""
-    manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    manager = (
+        read(root, "Sources/Phosphor/Services/BackupManager.swift")
+        + "\n"
+        + read(root, "Sources/Phosphor/Services/BackupManager+Resumable.swift")
+    )
     coord = read(root, "Sources/Phosphor/Utilities/BackupObservabilityCoordinator.swift")
     model = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
 
