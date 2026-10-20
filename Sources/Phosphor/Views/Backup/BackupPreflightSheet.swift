@@ -9,11 +9,45 @@ import SwiftUI
 /// AppKit window layering and z-order glitches.
 struct BackupPreflightSheet: View {
     let device: DeviceInfo
-    let incremental: Bool
+    @Binding var incremental: Bool
     let preferNetwork: Bool
     @Binding var configuration: DeviceBackupConfiguration
     var onNavigateToBackups: () -> Void = {}
     var onStartBackup: () -> Void
+
+    init(
+        device: DeviceInfo,
+        incremental: Binding<Bool>,
+        preferNetwork: Bool,
+        configuration: Binding<DeviceBackupConfiguration>,
+        onNavigateToBackups: @escaping () -> Void = {},
+        onStartBackup: @escaping () -> Void
+    ) {
+        self.device = device
+        self._incremental = incremental
+        self.preferNetwork = preferNetwork
+        self._configuration = configuration
+        self.onNavigateToBackups = onNavigateToBackups
+        self.onStartBackup = onStartBackup
+    }
+
+    init(
+        device: DeviceInfo,
+        incremental: Bool,
+        preferNetwork: Bool,
+        configuration: Binding<DeviceBackupConfiguration>,
+        onNavigateToBackups: @escaping () -> Void = {},
+        onStartBackup: @escaping () -> Void
+    ) {
+        self.init(
+            device: device,
+            incremental: .constant(incremental),
+            preferNetwork: preferNetwork,
+            configuration: configuration,
+            onNavigateToBackups: onNavigateToBackups,
+            onStartBackup: onStartBackup
+        )
+    }
 
     @Environment(\.dismiss) private var dismiss
     @AppStorage("phosphor.backupDirectory") private var backupDirectory = BackupManager.defaultBackupDir
@@ -192,31 +226,71 @@ struct BackupPreflightSheet: View {
                     .padding(12)
                     .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
 
-                    // Archive existing backup protection toggle
-                    if hasExistingBackup && !incremental {
-                        HStack(spacing: 10) {
-                            Image(systemName: "clock.arrow.circlepath")
-                                .font(.system(size: 15))
-                                .foregroundStyle(Color.brandAccent)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Preserve Existing Backup")
+                    // Backup Mode & Archive existing backup protection
+                    if hasExistingBackup {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Image(systemName: incremental ? "arrow.triangle.2.circlepath" : "externaldrive.badge.plus")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(Color.brandAccent)
+                                Text("Backup Mode")
                                     .font(.system(size: 12, weight: .semibold))
-                                Text("Archive current backup before full backup to prevent overwriting.")
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Picker("", selection: $incremental) {
+                                    Text("Full Backup").tag(false)
+                                    Text("Incremental (Fast)").tag(true)
+                                }
+                                .pickerStyle(.segmented)
+                                .labelsHidden()
+                                .frame(width: 220)
                             }
 
-                            Spacer()
+                            Text(incremental
+                                 ? "Updates the existing backup with only changed files since the last snapshot."
+                                 : "Transfers a complete snapshot of selected domains from the device.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
 
-                            Toggle("", isOn: $archiveExistingOnFullBackup)
-                                .labelsHidden()
-                                .toggleStyle(.switch)
-                                .controlSize(.small)
+                            if !incremental {
+                                Divider()
+                                HStack(spacing: 10) {
+                                    Image(systemName: "clock.arrow.circlepath")
+                                        .font(.system(size: 15))
+                                        .foregroundStyle(Color.brandAccent)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("Preserve Existing Backup")
+                                            .font(.system(size: 12, weight: .semibold))
+                                        Text("Archive current backup before full backup to prevent overwriting.")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    Toggle("", isOn: $archiveExistingOnFullBackup)
+                                        .labelsHidden()
+                                        .toggleStyle(.switch)
+                                        .controlSize(.small)
+                                }
+                            }
                         }
                         .padding(12)
                         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
                     }
+
+                    // Unlock reminder to prevent MBErrorDomain/208
+                    HStack(spacing: 10) {
+                        Image(systemName: "lock.open.iphone")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.orange)
+                        Text("Keep \(device.name) unlocked and awake, then enter your passcode on the device screen when prompted.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
                 }
                 .padding(24)
             }
