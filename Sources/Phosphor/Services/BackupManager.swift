@@ -374,40 +374,33 @@ final class BackupManager: ObservableObject {
 
     // MARK: - Discovery
 
-    func discoverBackups(at directory: String? = nil) {
-        let dir = directory ?? Self.activeBackupDir
+    nonisolated static func scanBackupDirectory(at directory: String? = nil) -> (backups: [BackupInfo], error: String?) {
+        let dir = directory ?? activeBackupDir
         let fm = FileManager.default
 
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: dir, isDirectory: &isDir) else {
-            backups = []
-            lastError = nil
-            return
+            return ([], nil)
         }
         guard isDir.boolValue else {
-            backups = []
-            lastError = "\(dir) is not a directory."
-            return
+            return ([], "\(dir) is not a directory.")
         }
 
         // Single-backup case: the chosen dir is itself a UDID backup folder
         // (contains Info.plist + Manifest.* at its root). Common when a user
         // points the picker at an individual backup rather than its parent.
-        if Self.looksLikeBackupFolder(dir),
+        if looksLikeBackupFolder(dir),
            let single = BackupInfo.fromDirectory(dir, includeSize: false) {
-            backups = [single]
-            lastError = nil
-            return
+            return ([single], nil)
         }
 
         let contents: [String]
         do {
             contents = try fm.contentsOfDirectory(atPath: dir).sorted()
         } catch {
-            backups = []
             // TCC denial on ~/Library/Application Support/MobileSync/Backup
             // surfaces as a permission error here. Tell the user how to fix it.
-            let isMobileSync = (dir == Self.systemMobileSyncDir)
+            let isMobileSync = (dir == systemMobileSyncDir)
             var msg = "Cannot read backup directory at \(dir): \(error.localizedDescription)"
             if isMobileSync {
                 msg += """
@@ -418,26 +411,31 @@ final class BackupManager: ObservableObject {
                 Alternatively, copy a backup folder into ~/Documents/Phosphor Backups or use Phosphor > Settings to point at a non-protected location.
                 """
             }
-            lastError = msg
-            return
+            return ([], msg)
         }
 
         var discovered: [BackupInfo] = []
         for item in contents {
-            if Self.isAuxiliaryBackupDirectoryName(item) { continue }
+            if isAuxiliaryBackupDirectoryName(item) { continue }
             let fullPath = (dir as NSString).appendingPathComponent(item)
             var itemIsDir: ObjCBool = false
             guard fm.fileExists(atPath: fullPath, isDirectory: &itemIsDir), itemIsDir.boolValue else { continue }
 
-            guard Self.looksLikeBackupFolder(fullPath) else { continue }
+            guard looksLikeBackupFolder(fullPath) else { continue }
 
             if let backup = BackupInfo.fromDirectory(fullPath, includeSize: false) {
                 discovered.append(backup)
             }
         }
 
-        backups = discovered.sorted { ($0.lastBackupDate ?? .distantPast) > ($1.lastBackupDate ?? .distantPast) }
-        lastError = nil
+        let sorted = discovered.sorted { ($0.lastBackupDate ?? .distantPast) > ($1.lastBackupDate ?? .distantPast) }
+        return (sorted, nil)
+    }
+
+    func discoverBackups(at directory: String? = nil) {
+        let result = Self.scanBackupDirectory(at: directory)
+        backups = result.backups
+        lastError = result.error
     }
 
     /// True when a backup metadata file exists AND has real content. An interrupted
@@ -453,7 +451,7 @@ final class BackupManager: ObservableObject {
     }
 
     /// True when `path` looks like a single iOS backup folder (UDID dir with Info.plist + Manifest.*).
-    static func looksLikeBackupFolder(_ path: String) -> Bool {
+    nonisolated static func looksLikeBackupFolder(_ path: String) -> Bool {
         let info = (path as NSString).appendingPathComponent("Info.plist")
         let manifestPlist = (path as NSString).appendingPathComponent("Manifest.plist")
         let manifestDb = (path as NSString).appendingPathComponent("Manifest.db")

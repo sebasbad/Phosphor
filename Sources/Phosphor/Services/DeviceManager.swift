@@ -211,22 +211,27 @@ final class DeviceManager: ObservableObject {
         let devices = currentDevices.filter { $0.connectionType == .usb } + stableNetworkDevices
 
         if devices.isEmpty {
-            nearbyWirelessDevices = await cachedBonjourDevices(forceRefresh: forceRefresh)
-            connectedDevices = []
-            selectedDevice = nil
+            let bonjour = await cachedBonjourDevices(forceRefresh: forceRefresh)
+            if nearbyWirelessDevices != bonjour { nearbyWirelessDevices = bonjour }
+            if !connectedDevices.isEmpty { connectedDevices = [] }
+            if selectedDevice != nil { selectedDevice = nil }
             deviceInfoCache.removeAll()
             batteryInfoCache.removeAll()
             pairStatusCache.removeAll()
             return
         }
 
-        nearbyWirelessDevices = []
-        connectedDevices = devices
+        if !nearbyWirelessDevices.isEmpty { nearbyWirelessDevices = [] }
+        if connectedDevices != devices { connectedDevices = devices }
+        let nextSelection: DeviceInfo?
         if let selectedID = selectedDevice?.id,
            let refreshedSelection = devices.first(where: { $0.id == selectedID }) {
-            selectedDevice = refreshedSelection
+            nextSelection = refreshedSelection
         } else {
-            selectedDevice = devices.first
+            nextSelection = devices.first
+        }
+        if selectedDevice != nextSelection {
+            selectedDevice = nextSelection
         }
     }
 

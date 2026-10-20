@@ -346,7 +346,9 @@ final class BackupViewModel: ObservableObject {
     private var searchSizeTask: Task<Void, Never>?
     private var currentDomainToken = UUID()
     private var currentSearchToken = UUID()
+    private var discoveryTask: Task<Void, Never>?
     private var sizeResolutionTask: Task<Void, Never>?
+    private var resolvedSizesByPath: [String: (size: UInt64, date: Date?)] = [:]
     private var latestBackupRequests: [String: BackupRequest] = [:]
     private var failedBackupRequests: [UUID: BackupRequest] = [:]
     private var jobQueue = BackupJobQueue(maxConcurrent: 2)
@@ -396,12 +398,28 @@ final class BackupViewModel: ObservableObject {
     }
 
     func loadBackups() {
-        sizeResolutionTask?.cancel()
-        backupManager.discoverBackups()
-        backups = backupManager.backups
-        loadError = backupManager.lastError
-        reconcileSelectedBackupAfterReload()
-        resolveBackupSizesInBackground(for: backups)
+        discoveryTask?.cancel()
+        let activeDir = BackupManager.activeBackupDir
+        let cachedSizes = resolvedSizesByPath
+        discoveryTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let scanned = BackupManager.scanBackupDirectory(at: activeDir)
+            if Task.isCancelled { return }
+            let hydrated = scanned.backups.map { backup -> BackupInfo in
+                if let cached = cachedSizes[backup.path], cached.date == backup.lastBackupDate {
+                    return backup.withSize(cached.size)
+                }
+                return backup
+            }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.backupManager.backups = hydrated
+                self.backupManager.lastError = scanned.error
+                self.backups = hydrated
+                self.loadError = scanned.error
+                self.reconcileSelectedBackupAfterReload()
+                self.resolveBackupSizesInBackground(for: hydrated)
+            }
+        }
     }
 
     private func reconcileSelectedBackupAfterReload() {
@@ -413,15 +431,19 @@ final class BackupViewModel: ObservableObject {
     }
 
     private func resolveBackupSizesInBackground(for snapshot: [BackupInfo]) {
-        guard !snapshot.isEmpty else { return }
+        let unresolved = snapshot.filter { !$0.sizeResolved }
+        guard !unresolved.isEmpty else { return }
+        sizeResolutionTask?.cancel()
         let snapshotIds = Set(snapshot.map(\.id))
         sizeResolutionTask = Task.detached(priority: .utility) { [weak self] in
-            for backup in snapshot {
+            for backup in unresolved {
                 if Task.isCancelled { return }
-                let sized = backup.withSize(FileManager.default.directorySize(at: backup.path))
+                let computedSize = FileManager.default.directorySize(at: backup.path)
+                let sized = backup.withSize(computedSize)
                 if Task.isCancelled { return }
                 await MainActor.run { [weak self] in
                     guard let self else { return }
+                    self.resolvedSizesByPath[backup.path] = (computedSize, backup.lastBackupDate)
                     let currentIds = Set(self.backups.map(\.id))
                     guard currentIds == snapshotIds,
                           let idx = self.backups.firstIndex(where: { $0.id == sized.id }) else { return }
@@ -453,7 +475,11 @@ final class BackupViewModel: ObservableObject {
         }
 
         UserDefaults.standard.set(target, forKey: BackupManager.backupDirectoryUserDefaultsKey)
-        loadBackups()
+        backupManager.discoverBackups()
+        backups = backupManager.backups
+        loadError = backupManager.lastError
+        reconcileSelectedBackupAfterReload()
+        resolveBackupSizesInBackground(for: backups)
         if backups.isEmpty {
             alertMessage = loadError ?? "No backups found in \(target)."
             showAlert = true
