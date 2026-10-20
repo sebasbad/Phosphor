@@ -329,6 +329,9 @@ struct BackupListView: View {
     }
 
     private func hasResumableBackup(for device: DeviceInfo) -> Bool {
+        if let existing = backupVM.backups.first(where: { $0.udid == device.id || $0.id == device.id }) {
+            return existing.healthState == .paused
+        }
         if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: device.id) {
             return BackupManager.incompleteBackupHasPayloadData(path)
         }
@@ -618,7 +621,10 @@ struct BackupListView: View {
     }
 
     private func shouldOfferIncremental(for device: DeviceInfo) -> Bool {
-        BackupManager.hasExistingBackup(for: device.id) && backupVM.backups.contains { backup in
+        if let existing = backupVM.backups.first(where: { $0.udid == device.id || $0.id == device.id }) {
+            return existing.healthState == .complete
+        }
+        return BackupManager.hasExistingBackup(for: device.id) && backupVM.backups.contains { backup in
             backup.udid == device.id || backup.id == device.id
         }
     }
