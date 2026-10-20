@@ -65,3 +65,26 @@ def test_upstream_feedback_invariants(root: Path) -> None:
     vm = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
     assert 'lower.contains("pin")' not in manager and 'lower.contains("pin")' not in vm, "passcode prompt detection must not match 'Skipping' via bare 'pin' substring"
 
+
+def test_backup_health_state_metadata_guard_and_quarantine(root: Path) -> None:
+    model = read(root, "Sources/Phosphor/Models/BackupInfo.swift")
+    resumable = read(root, "Sources/Phosphor/Services/BackupManager+Resumable.swift")
+    manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    list_view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+
+    assert_contains(model, "enum HealthState", "BackupInfo must define deterministic HealthState (.complete, .paused, .broken)")
+    assert_contains(model, "var healthState: HealthState", "BackupInfo must compute healthState from manifest, payload buckets, and SnapshotState")
+    assert_contains(resumable, r'".\(udid)-phosphor-guard-bkp"', "Metadata rollback guard must use .<UDID>-phosphor-guard-bkp")
+    assert_contains(resumable, '"-phosphor-quarantine-bkp-"', "Sanitization quarantine must use <UDID>-phosphor-quarantine-bkp-<timestamp>")
+    assert_contains(resumable, '"-phosphor-broken-bkp-"', "Broken backup repair quarantine must use <UDID>-phosphor-broken-bkp-<timestamp>")
+    assert_contains(resumable, "static func stageMetadataGuard", "BackupManager must stage metadata guard before running backup tools")
+    assert_contains(resumable, "static func restoreMetadataGuardIfNeeded", "BackupManager must restore clobbered metadata when backup aborts")
+    assert_contains(resumable, "static func quarantineBrokenBackup", "BackupManager must quarantine broken backup folders non-destructively")
+    assert_contains(manager, "if Self.isAuxiliaryBackupDirectoryName(item) { continue }", "discoverBackups must ignore guard and quarantine directories")
+    assert_contains(list_view, 'StatusChip(text: "Complete"', "Complete backups must display Complete health badge")
+    assert_contains(list_view, 'StatusChip(text: "Paused"', "Paused backups must display Paused health badge")
+    assert_contains(list_view, 'StatusChip(text: "Broken"', "Broken backups must display Broken health badge")
+    assert_contains(list_view, 'Button("Repair", action: onRepair)', "Broken backups must offer a Repair action")
+    assert_contains(list_view, ".disabled(!isDeviceConnected)", "Resume and Repair actions must be disabled when the device is disconnected")
+
+

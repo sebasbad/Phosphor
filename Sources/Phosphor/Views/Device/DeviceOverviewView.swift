@@ -516,7 +516,7 @@ struct DeviceOverviewView: View {
             return
         }
         let preferNetwork = device.connectionType == .wifi
-        let incremental = preferNetwork && hasCompleteBackup(for: device)
+        let incremental = hasCompleteBackup(for: device)
         if preferNetwork && !incremental {
             pendingBackupDevice = device
             showFullWiFiBackupConfirm = true
