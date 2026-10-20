@@ -13,7 +13,8 @@ extension BackupManager {
                 var isDir: ObjCBool = false
                 if fm.fileExists(atPath: subPath, isDirectory: &isDir) {
                     if isDir.boolValue {
-                        if let subEntries = try? fm.contentsOfDirectory(atPath: subPath), !subEntries.isEmpty {
+                        if let enumerator = fm.enumerator(at: URL(fileURLWithPath: subPath), includingPropertiesForKeys: nil, options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]),
+                           enumerator.nextObject() != nil {
                             return true
                         }
                     } else if isNonEmptyFile(subPath) {
