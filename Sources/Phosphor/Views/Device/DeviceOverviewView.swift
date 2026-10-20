@@ -80,9 +80,9 @@ struct DeviceOverviewView: View {
             Text("The incomplete backup folder will be moved to the Trash. The device needs to be unlocked and connected over USB for the full backup to succeed.")
         }
         .alert("Full Wi-Fi Backup?", isPresented: $showFullWiFiBackupConfirm) {
-            Button("Run Full Wi-Fi Backup") {
+            Button("Configure & Run Full Wi-Fi Backup") {
                 if let device = pendingBackupDevice {
-                    Task { await backupVM.createBackup(udid: device.id, incremental: false, preferNetwork: true) }
+                    onShowPreflight?(device)
                 }
                 pendingBackupDevice = nil
             }
@@ -506,7 +506,13 @@ struct DeviceOverviewView: View {
 
     private func startBackup(for device: DeviceInfo) {
         if hasResumableBackup(for: device) {
-            onShowPreflight?(device)
+            Task {
+                await backupVM.resumeBackup(
+                    udid: device.id,
+                    preferNetwork: device.connectionType == .wifi,
+                    device: device
+                )
+            }
             return
         }
         let preferNetwork = device.connectionType == .wifi
@@ -516,7 +522,11 @@ struct DeviceOverviewView: View {
             showFullWiFiBackupConfirm = true
             return
         }
-        Task { await backupVM.createBackup(udid: device.id, incremental: incremental, preferNetwork: preferNetwork) }
+        if let onShowPreflight {
+            onShowPreflight(device)
+        } else {
+            Task { await backupVM.createBackup(udid: device.id, incremental: incremental, preferNetwork: preferNetwork) }
+        }
     }
 
     private func copyableInfoRow(label: String, value: String, icon: String) -> some View {
