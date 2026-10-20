@@ -3,45 +3,180 @@ import SQLite3
 
 extension BackupManager {
 
-    /// True when the incomplete backup folder contains real payload data (hashed directories/files).
-    static func incompleteBackupHasPayloadData(_ path: String) -> Bool {
+    /// True when the backup root directory itself contains payload files in 2-hex-character buckets (00-ff).
+    nonisolated static func backupRootHasPayloadData(_ path: String) -> Bool {
         let fm = FileManager.default
-        let checkPayloadDir: (String) -> Bool = { dirPath in
-            guard let entries = try? fm.contentsOfDirectory(atPath: dirPath) else { return false }
-            for entry in entries {
-                // iOS stores payload files in 2-hex-character subdirectories (00-ff) or SHA-1 hashes (40 chars)
-                if entry.count == 2 || entry.count == 40 {
-                    let subPath = (dirPath as NSString).appendingPathComponent(entry)
-                    var isDir: ObjCBool = false
-                    if fm.fileExists(atPath: subPath, isDirectory: &isDir) {
-                        if isDir.boolValue {
-                            if let subEntries = try? fm.contentsOfDirectory(atPath: subPath), !subEntries.isEmpty {
-                                return true
-                            }
-                        } else if isNonEmptyFile(subPath) {
+        guard let entries = try? fm.contentsOfDirectory(atPath: path) else { return false }
+        for entry in entries {
+            if entry.count == 2 || entry.count == 40 {
+                let subPath = (path as NSString).appendingPathComponent(entry)
+                var isDir: ObjCBool = false
+                if fm.fileExists(atPath: subPath, isDirectory: &isDir) {
+                    if isDir.boolValue {
+                        if let subEntries = try? fm.contentsOfDirectory(atPath: subPath), !subEntries.isEmpty {
                             return true
                         }
+                    } else if isNonEmptyFile(subPath) {
+                        return true
                     }
                 }
             }
-            return false
         }
+        return false
+    }
 
-        // Check the backup root directory
-        if checkPayloadDir(path) {
+    /// True when the incomplete backup folder contains real payload data (hashed directories/files).
+    nonisolated static func incompleteBackupHasPayloadData(_ path: String) -> Bool {
+        if backupRootHasPayloadData(path) {
             return true
         }
 
         // MobileBackup2 / pymobiledevice3 stores in-flight files in a 'Snapshot/' subdirectory before promotion
+        let fm = FileManager.default
         let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
         var isSnapshotDir: ObjCBool = false
         if fm.fileExists(atPath: snapshotPath, isDirectory: &isSnapshotDir), isSnapshotDir.boolValue {
-            if checkPayloadDir(snapshotPath) {
+            if backupRootHasPayloadData(snapshotPath) {
                 return true
             }
         }
 
         return false
+    }
+
+    // MARK: - Non-Destructive Metadata Rollback Guard & Quarantine (Issue #8)
+
+    /// Path to the hidden in-flight metadata guard directory (`<BackupRoot>/.<UDID>-phosphor-guard-bkp`).
+    nonisolated static func metadataGuardPath(for udid: String, in directory: String? = nil) -> String {
+        let root = directory ?? activeBackupDir
+        return (root as NSString).appendingPathComponent(".\(udid)-phosphor-guard-bkp")
+    }
+
+    /// True when a directory name in `<BackupRoot>` is an internal guard or quarantine directory
+    /// that must be skipped by `discoverBackups`.
+    nonisolated static func isAuxiliaryBackupDirectoryName(_ itemName: String) -> Bool {
+        if itemName.hasPrefix(".") { return true }
+        if itemName.contains("-phosphor-guard-bkp") { return true }
+        if itemName.contains("-phosphor-quarantine-bkp-") { return true }
+        if itemName.contains("-phosphor-broken-bkp-") { return true }
+        return false
+    }
+
+    /// Snapshots valid non-empty root metadata files (`Info.plist`, `Status.plist`, `Manifest.plist`)
+    /// into `<BackupRoot>/.<UDID>-phosphor-guard-bkp` before a backup or resume subprocess starts.
+    /// Never overwrites an already-staged valid guard file with a 0-byte or unparseable file.
+    @discardableResult
+    nonisolated static func stageMetadataGuard(for udid: String, in directory: String? = nil) -> Bool {
+        let fm = FileManager.default
+        let root = directory ?? activeBackupDir
+        let targetDir = backupPath(for: udid, in: root)
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: targetDir, isDirectory: &isDir), isDir.boolValue else {
+            return false
+        }
+
+        let guardDir = metadataGuardPath(for: udid, in: root)
+        let metadataFiles = ["Info.plist", "Status.plist", "Manifest.plist"]
+        var stagedAny = false
+
+        for fileName in metadataFiles {
+            let srcPath = (targetDir as NSString).appendingPathComponent(fileName)
+            guard isNonEmptyFile(srcPath),
+                  let data = try? Data(contentsOf: URL(fileURLWithPath: srcPath)),
+                  (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) != nil else {
+                continue
+            }
+            if !fm.fileExists(atPath: guardDir) {
+                try? fm.createDirectory(atPath: guardDir, withIntermediateDirectories: true)
+            }
+            let dstPath = (guardDir as NSString).appendingPathComponent(fileName)
+            try? fm.removeItem(atPath: dstPath)
+            if (try? fm.copyItem(atPath: srcPath, toPath: dstPath)) != nil {
+                stagedAny = true
+            }
+        }
+        return stagedAny
+    }
+
+    /// Restores clobbered or zero-byte root metadata files (`Info.plist`, `Status.plist`, `Manifest.plist`)
+    /// from `<BackupRoot>/.<UDID>-phosphor-guard-bkp` when a backup or resume subprocess fails or aborts
+    /// before completing (e.g., `MBErrorDomain/208 Device locked`).
+    @discardableResult
+    nonisolated static func restoreMetadataGuardIfNeeded(for udid: String, in directory: String? = nil) -> Int {
+        let fm = FileManager.default
+        let root = directory ?? activeBackupDir
+        let targetDir = backupPath(for: udid, in: root)
+        let guardDir = metadataGuardPath(for: udid, in: root)
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: guardDir, isDirectory: &isDir), isDir.boolValue,
+              fm.fileExists(atPath: targetDir, isDirectory: &isDir), isDir.boolValue else {
+            return 0
+        }
+
+        let snapshotPath = (targetDir as NSString).appendingPathComponent("Snapshot")
+        let hasActiveSnapshot = fm.fileExists(atPath: snapshotPath, isDirectory: &isDir) && isDir.boolValue
+        var restoredCount = 0
+
+        for fileName in ["Manifest.plist", "Status.plist", "Info.plist"] {
+            let guardFile = (guardDir as NSString).appendingPathComponent(fileName)
+            guard isNonEmptyFile(guardFile) else { continue }
+            let targetFile = (targetDir as NSString).appendingPathComponent(fileName)
+
+            let targetValid: Bool = {
+                guard isNonEmptyFile(targetFile),
+                      let data = try? Data(contentsOf: URL(fileURLWithPath: targetFile)),
+                      let plist = (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) as? [String: Any] else {
+                    return false
+                }
+                // If pymobiledevice3 --full overwrote Status.plist with a pre-handshake "BackupState = new" stub
+                // and no Snapshot/ directory was created before aborting, treat Status.plist as clobbered.
+                if fileName == "Status.plist",
+                   !hasActiveSnapshot,
+                   (plist["BackupState"] as? String)?.lowercased() == "new" {
+                    return false
+                }
+                return true
+            }()
+
+            if !targetValid {
+                try? fm.removeItem(atPath: targetFile)
+                if (try? fm.copyItem(atPath: guardFile, toPath: targetFile)) != nil {
+                    restoredCount += 1
+                }
+            }
+        }
+        return restoredCount
+    }
+
+    /// Removes `<BackupRoot>/.<UDID>-phosphor-guard-bkp` once a backup finishes and passes verification.
+    nonisolated static func commitMetadataGuard(for udid: String, in directory: String? = nil) {
+        let guardDir = metadataGuardPath(for: udid, in: directory)
+        try? FileManager.default.removeItem(atPath: guardDir)
+    }
+
+    /// Moves a broken backup folder out of the active `<UDID>` slot by renaming it to
+    /// `<BackupRoot>/<UDID>-phosphor-broken-bkp-<yyyyMMdd-HHmmss>` so no user data is deleted
+    /// and a clean repair backup can run without collision.
+    @discardableResult
+    nonisolated static func quarantineBrokenBackup(at path: String) -> String? {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
+
+        let parentDir = (path as NSString).deletingLastPathComponent
+        let dirName = (path as NSString).lastPathComponent
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let timestamp = formatter.string(from: Date())
+        let quarantineName = "\(dirName)-phosphor-broken-bkp-\(timestamp)"
+        let quarantinePath = (parentDir as NSString).appendingPathComponent(quarantineName)
+
+        do {
+            try fm.moveItem(atPath: path, toPath: quarantinePath)
+            return quarantinePath
+        } catch {
+            return nil
+        }
     }
 
     struct IncompleteBackupStats {
@@ -252,7 +387,28 @@ extension BackupManager {
         var cleaned = 0
         var walCheckpointed = false
 
-        // 1. Remove 0-byte or unparseable Status.plist so mobilebackup2 starts a clean phase
+        let parentDir = (path as NSString).deletingLastPathComponent
+        let dirName = (path as NSString).lastPathComponent
+        var createdQuarantineDir: String?
+        let quarantineNonEmptyFile: (String, String) -> Bool = { filePath, fileName in
+            if createdQuarantineDir == nil {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyyMMdd-HHmmss"
+                let ts = formatter.string(from: Date())
+                let qDir = (parentDir as NSString).appendingPathComponent("\(dirName)-phosphor-quarantine-bkp-\(ts)")
+                try? fm.createDirectory(atPath: qDir, withIntermediateDirectories: true)
+                createdQuarantineDir = qDir
+            }
+            guard let qDir = createdQuarantineDir else { return false }
+            let dst = (qDir as NSString).appendingPathComponent(fileName)
+            try? fm.removeItem(atPath: dst)
+            return (try? fm.moveItem(atPath: filePath, toPath: dst)) != nil
+        }
+
+        // First restore any valid metadata from .<UDID>-phosphor-guard-bkp if present
+        cleaned += restoreMetadataGuardIfNeeded(for: dirName, in: parentDir)
+
+        // 1. Remove 0-byte or quarantine unparseable Status.plist so mobilebackup2 starts a clean phase
         let statusPath = (path as NSString).appendingPathComponent("Status.plist")
         if fm.fileExists(atPath: statusPath) {
             scanned += 1
@@ -260,11 +416,11 @@ extension BackupManager {
                 if (try? fm.removeItem(atPath: statusPath)) != nil { cleaned += 1 }
             } else if let data = try? Data(contentsOf: URL(fileURLWithPath: statusPath)),
                       (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) == nil {
-                if (try? fm.removeItem(atPath: statusPath)) != nil { cleaned += 1 }
+                if quarantineNonEmptyFile(statusPath, "Status.plist") { cleaned += 1 }
             }
         }
 
-        // 2. Remove 0-byte Info.plist if unparseable
+        // 2. Remove 0-byte or quarantine unparseable Info.plist
         let infoPath = (path as NSString).appendingPathComponent("Info.plist")
         if fm.fileExists(atPath: infoPath) {
             scanned += 1
@@ -272,11 +428,11 @@ extension BackupManager {
                 if (try? fm.removeItem(atPath: infoPath)) != nil { cleaned += 1 }
             } else if let data = try? Data(contentsOf: URL(fileURLWithPath: infoPath)),
                       (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) == nil {
-                if (try? fm.removeItem(atPath: infoPath)) != nil { cleaned += 1 }
+                if quarantineNonEmptyFile(infoPath, "Info.plist") { cleaned += 1 }
             }
         }
 
-        // 3. Remove 0-byte Manifest.plist if unparseable
+        // 3. Remove 0-byte or quarantine unparseable Manifest.plist
         let manifestPlistPath = (path as NSString).appendingPathComponent("Manifest.plist")
         if fm.fileExists(atPath: manifestPlistPath) {
             scanned += 1
@@ -284,7 +440,7 @@ extension BackupManager {
                 if (try? fm.removeItem(atPath: manifestPlistPath)) != nil { cleaned += 1 }
             } else if let data = try? Data(contentsOf: URL(fileURLWithPath: manifestPlistPath)),
                       (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) == nil {
-                if (try? fm.removeItem(atPath: manifestPlistPath)) != nil { cleaned += 1 }
+                if quarantineNonEmptyFile(manifestPlistPath, "Manifest.plist") { cleaned += 1 }
             }
         }
 
@@ -328,12 +484,29 @@ extension BackupManager {
             }
         }
 
-        // 5. Clean up leftover temporary/partial download files (.tmp, .staging)
+        // 5. Clean up 0-byte leftover temporary files (.tmp, .staging) and quarantine non-empty foreign files
+        let validRootNames: Set<String> = [
+            "Info.plist", "Status.plist", "Manifest.plist",
+            "Manifest.db", "Manifest.db-wal", "Manifest.db-shm",
+            "Manifest.mbdb", "Snapshot"
+        ]
+        let isTwoCharHex: (String) -> Bool = { name in
+            guard name.count == 2 else { return false }
+            return name.allSatisfy { ("0"..."9").contains($0) || ("a"..."f").contains($0) || ("A"..."F").contains($0) }
+        }
         if let entries = try? fm.contentsOfDirectory(atPath: path) {
-            for entry in entries where entry.hasSuffix(".tmp") || entry.hasSuffix(".staging") {
+            for entry in entries {
+                if validRootNames.contains(entry) || isTwoCharHex(entry) { continue }
+                let entryPath = (path as NSString).appendingPathComponent(entry)
                 scanned += 1
-                if (try? fm.removeItem(atPath: (path as NSString).appendingPathComponent(entry))) != nil {
-                    cleaned += 1
+                if entry == ".DS_Store" || ((entry.hasSuffix(".tmp") || entry.hasSuffix(".staging")) && !isNonEmptyFile(entryPath)) {
+                    if (try? fm.removeItem(atPath: entryPath)) != nil {
+                        cleaned += 1
+                    }
+                } else {
+                    if quarantineNonEmptyFile(entryPath, entry) {
+                        cleaned += 1
+                    }
                 }
             }
         }
