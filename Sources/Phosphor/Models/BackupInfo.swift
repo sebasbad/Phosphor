@@ -22,6 +22,7 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
     let size: UInt64
     let sizeResolved: Bool
     let appCount: Int
+    var healthState: HealthState = .complete
 
     var modelName: String {
         BackupInfoPlist(
@@ -79,7 +80,7 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
     /// - `.complete`: Manifest metadata exists, payload buckets (`00`..`ff`) exist at root, no unpromoted `Snapshot/`, and `SnapshotState == "finished"`.
     /// - `.paused`: Payload files exist in `00`..`ff` or `Snapshot/`, and backup is awaiting resumption (`Snapshot/` exists or `SnapshotState != "finished"`).
     /// - `.broken`: Metadata files exist (`Info.plist` / `Manifest.db`), but zero payload files exist in `00`..`ff` or `Snapshot/`.
-    var healthState: HealthState {
+    static func computeHealthState(at path: String, snapshotState: String? = nil) -> HealthState {
         let manifestDb = (path as NSString).appendingPathComponent("Manifest.db")
         let manifestPlist = (path as NSString).appendingPathComponent("Manifest.plist")
         let fm = FileManager.default
@@ -97,13 +98,20 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
             return .paused
         }
 
-        let statusPath = (path as NSString).appendingPathComponent("Status.plist")
-        guard let data = fm.contents(atPath: statusPath),
-              let plist = (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) as? [String: Any],
-              let snapshotState = plist["SnapshotState"] as? String else {
+        let resolvedSnapshotState: String? = {
+            if let snapshotState { return snapshotState }
+            let statusPath = (path as NSString).appendingPathComponent("Status.plist")
+            guard let data = fm.contents(atPath: statusPath),
+                  let plist = (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) as? [String: Any] else {
+                return nil
+            }
+            return plist["SnapshotState"] as? String
+        }()
+
+        guard let resolvedSnapshotState else {
             return hasRootPayload ? .paused : .broken
         }
-        return (hasRootPayload && snapshotState.lowercased() == "finished") ? .complete : .paused
+        return (hasRootPayload && resolvedSnapshotState.lowercased() == "finished") ? .complete : .paused
     }
 
     /// Whether this backup has sealed metadata and completed snapshot files.
@@ -120,6 +128,7 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
         let status = PlistParser.parseBackupStatus(path)
         let manifest = PlistParser.parseManifest(path)
         let size = includeSize ? FileManager.default.directorySize(at: path) : 0
+        let health = computeHealthState(at: path, snapshotState: status?.snapshotState)
 
         let manifestDbPath = (path as NSString).appendingPathComponent("Manifest.db")
         let manifestDbDate = (try? FileManager.default.attributesOfItem(atPath: manifestDbPath)[.modificationDate]) as? Date
@@ -147,7 +156,8 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
             isFullBackup: status?.isFullBackup ?? false,
             size: size,
             sizeResolved: includeSize,
-            appCount: manifest?.applicationBundleIds.count ?? info.appCount
+            appCount: manifest?.applicationBundleIds.count ?? info.appCount,
+            healthState: health
         )
     }
 
@@ -166,7 +176,8 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
             isFullBackup: isFullBackup,
             size: size,
             sizeResolved: true,
-            appCount: appCount
+            appCount: appCount,
+            healthState: healthState
         )
     }
 }
