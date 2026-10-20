@@ -207,7 +207,7 @@ struct BackupListView: View {
             if let device = preflightDevice {
                 BackupPreflightSheet(
                     device: device,
-                    incremental: preflightIncremental,
+                    incremental: $preflightIncremental,
                     preferNetwork: preflightPreferNetwork,
                     configuration: $preflightConfig,
                     onNavigateToBackups: {},

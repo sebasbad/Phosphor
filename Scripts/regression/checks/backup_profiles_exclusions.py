@@ -61,5 +61,7 @@ def test_app_exclusion_sheet_and_profile_selector_views_exist(root: Path) -> Non
 
     assert_contains(preflight_src, "BackupProfileSelectorView", "BackupPreflightSheet must embed BackupProfileSelectorView")
     assert_contains(preflight_src, "AppExclusion", "BackupPreflightSheet must embed AppExclusion view")
+    assert_contains(preflight_src, '"Backup Mode"', "BackupPreflightSheet must let the user switch between Full and Incremental when an existing backup exists")
     assert_contains(content_src, "BackupPreflightSheet", "ContentView must present BackupPreflightSheet at root level")
     assert_contains(overview_src, "onShowPreflight", "DeviceOverviewView must trigger preflight via callback")
+    assert_contains(overview_src, "if let onShowPreflight {\n            onShowPreflight(device)", "DeviceOverviewView.startBackup must route normal backups through onShowPreflight")
