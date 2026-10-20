@@ -147,6 +147,9 @@ final class BackupManager: ObservableObject {
         if lower.contains("not paired") || lower.contains("pairingdialogresponsepending") || lower.contains("trust this computer") {
             return ("Device is not trusted. Unlock it and tap 'Trust' when prompted, then try again.", .retry)
         }
+        if lower.contains("mberrordomain/208") || lower.contains("device locked") {
+            return ("The device was locked or the passcode prompt was dismissed. Unlock the device, keep its screen awake, and enter your passcode on the device when prompted.", .retry)
+        }
         if lower.contains("passcodesetuprequired") || lower.contains("setpasscode") {
             return ("Set a passcode on the device before running an encrypted backup.", .retry)
         }
