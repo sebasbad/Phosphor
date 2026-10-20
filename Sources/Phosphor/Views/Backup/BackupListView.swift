@@ -93,7 +93,8 @@ struct BackupListView: View {
                     ForEach(backupVM.backups) { backup in
                         BackupRow(
                             backup: backup,
-                            activity: backupVM.activity(for: backup.udid)
+                            activity: backupVM.activity(for: backup.udid),
+                            isDeviceConnected: deviceVM.devices.contains(where: { $0.id == backup.udid })
                         ) {
                             if backupVM.openBackupBrowser(backup) {
                                 onBrowseBackup()
@@ -103,6 +104,8 @@ struct BackupListView: View {
                             showDeleteConfirm = true
                         } onResume: {
                             Task { await backupVM.restartStalledBackup(udid: backup.udid, device: deviceVM.devices.first(where: { $0.id == backup.udid })) }
+                        } onRepair: {
+                            repairBrokenBackup(backup)
                         } onPause: {
                             pauseBackupActivity(for: backup.udid)
                         } onDiagnose: {
@@ -674,6 +677,13 @@ struct BackupListView: View {
         showPreflightSheet = true
     }
 
+    private func repairBrokenBackup(_ backup: BackupInfo) {
+        guard let device = deviceVM.devices.first(where: { $0.id == backup.udid }) else { return }
+        _ = BackupManager.quarantineBrokenBackup(at: backup.path)
+        backupVM.loadBackups()
+        startBackup(for: device, incremental: false)
+    }
+
     private func importPhosphorArchive() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -1022,9 +1032,11 @@ struct BackupDiagnosisSheet: View {
 struct BackupRow: View {
     let backup: BackupInfo
     var activity: BackupViewModel.BackupActivity?
+    var isDeviceConnected: Bool = true
     let onBrowse: () -> Void
     let onDelete: () -> Void
     let onResume: () -> Void
+    var onRepair: () -> Void = {}
     let onPause: () -> Void
     var onDiagnose: () -> Void = {}
     @State private var isExporting = false
@@ -1163,10 +1175,19 @@ struct BackupRow: View {
                             .help("Encrypted backup")
                     }
 
-                    if backup.isComplete {
-                        StatusChip(text: backup.isFullBackup ? "Full" : "Incremental", color: .brandAccent)
-                    } else {
-                        StatusChip(text: "Incomplete", color: .orange)
+                    switch backup.healthState {
+                    case .complete:
+                        StatusChip(text: "Full", color: .brandAccent)
+                            .help(backup.isFullBackup
+                                ? "Self-contained full snapshot created in a single session"
+                                : "Self-contained full snapshot updated across multiple incremental or resumed sessions")
+                        StatusChip(text: "Complete", color: .green, icon: "checkmark.circle.fill")
+                    case .paused:
+                        StatusChip(text: "Full", color: .brandAccent)
+                        StatusChip(text: "Paused", color: .orange, icon: "pause.circle.fill")
+                    case .broken:
+                        StatusChip(text: "Broken", color: .red, icon: "exclamationmark.triangle.fill")
+                            .help("Metadata exists, but zero payload files were found on disk")
                     }
                 }
 
@@ -1227,17 +1248,40 @@ struct BackupRow: View {
                             .controlSize(.small)
                             .help("Stops the backup and saves progress. You can resume later.")
                     }
-                } else if !backup.isComplete {
-                    Button("Resume", action: onResume)
-                        .buttonStyle(.borderedProminent)
-                        .tint(.orange)
-                        .controlSize(.small)
-                        .help("Resume incomplete backup from saved progress")
+                } else {
+                    switch backup.healthState {
+                    case .complete:
+                        EmptyView()
+                    case .paused:
+                        Button("Resume", action: onResume)
+                            .buttonStyle(.borderedProminent)
+                            .tint(.orange)
+                            .controlSize(.small)
+                            .disabled(!isDeviceConnected)
+                            .help(isDeviceConnected
+                                ? "Resume paused backup from saved progress"
+                                : "Connect \(backup.deviceName) to resume this backup")
+                    case .broken:
+                        Button("Repair", action: onRepair)
+                            .buttonStyle(.borderedProminent)
+                            .tint(.orange)
+                            .controlSize(.small)
+                            .disabled(!isDeviceConnected)
+                            .help(isDeviceConnected
+                                ? "Quarantine this broken folder and start a clean full backup"
+                                : "Connect \(backup.deviceName) to repair this backup")
+                        Button("Delete", role: .destructive, action: onDelete)
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help("Delete this broken backup folder")
+                    }
                 }
 
-                Button("Browse") { onBrowse() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                if backup.healthState != .broken {
+                    Button("Browse") { onBrowse() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
 
                 Menu {
                     Button("Browse Contents") { onBrowse() }

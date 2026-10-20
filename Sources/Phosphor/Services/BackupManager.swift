@@ -275,6 +275,7 @@ final class BackupManager: ObservableObject {
     }
 
     private func failWithoutFallback(operationID: UUID, udid: String, backupRoot: String, primary: String, stderr: String) {
+        Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
         finishOperation(operationID)
         backupProgress = "Backup failed"
         lastBackupFailure = Self.backupFailure(
@@ -423,6 +424,7 @@ final class BackupManager: ObservableObject {
 
         var discovered: [BackupInfo] = []
         for item in contents {
+            if Self.isAuxiliaryBackupDirectoryName(item) { continue }
             let fullPath = (dir as NSString).appendingPathComponent(item)
             var itemIsDir: ObjCBool = false
             guard fm.fileExists(atPath: fullPath, isDirectory: &itemIsDir), itemIsDir.boolValue else { continue }
@@ -442,7 +444,7 @@ final class BackupManager: ObservableObject {
     /// backup often leaves zero-length Info.plist / Manifest.* stubs; treating those
     /// as complete makes incremental backups fail with MBErrorDomain/205 (the exact
     /// "cannot parse null plist" failure the completeness check exists to prevent).
-    static func isNonEmptyFile(_ path: String) -> Bool {
+    nonisolated static func isNonEmptyFile(_ path: String) -> Bool {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
               let size = attributes[.size] as? UInt64 else {
             return false
@@ -474,6 +476,7 @@ final class BackupManager: ObservableObject {
             return .missing
         }
         guard isDir.boolValue else { return .incomplete(path: deviceDirectory) }
+        guard backupRootHasPayloadData(deviceDirectory) else { return .incomplete(path: deviceDirectory) }
         return looksLikeBackupFolder(deviceDirectory) ? .complete : .incomplete(path: deviceDirectory)
     }
 
@@ -556,6 +559,7 @@ final class BackupManager: ObservableObject {
     ) -> Bool {
         switch Self.backupMetadataHealth(for: udid, in: directory) {
         case .complete:
+            Self.commitMetadataGuard(for: udid, in: directory)
             finishOperation(operationID)
             backupProgress = "Backup complete"
             backupPercent = 1.0
@@ -563,6 +567,7 @@ final class BackupManager: ObservableObject {
             onProgress("Backup complete")
             return true
         case .missing:
+            Self.restoreMetadataGuardIfNeeded(for: udid, in: directory)
             let path = Self.backupPath(for: udid, in: directory)
             finishOperation(operationID)
             backupProgress = "Backup metadata incomplete"
@@ -578,6 +583,7 @@ final class BackupManager: ObservableObject {
             onProgress(lastError ?? "Backup metadata incomplete.")
             return false
         case .incomplete(let path):
+            Self.restoreMetadataGuardIfNeeded(for: udid, in: directory)
             let hasPayload = Self.incompleteBackupHasPayloadData(path)
             finishOperation(operationID)
             backupProgress = "Backup metadata incomplete"
@@ -672,6 +678,9 @@ final class BackupManager: ObservableObject {
             return false
         }
 
+        // Snapshot valid existing metadata before pymobiledevice3 / idevicebackup2 mutates the folder
+        Self.stageMetadataGuard(for: udid, in: backupRoot)
+
         // Primary: pymobiledevice3
         let pySuccess = await createBackupViaPymobiledevice(
             udid: udid,
@@ -686,6 +695,7 @@ final class BackupManager: ObservableObject {
             return finalizeSuccessfulBackup(udid: udid, directory: backupRoot, operationID: operationID, onProgress: onProgress)
         }
         if operationWasCancelled(operationID) {
+            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
             markOperationCancelled(operationID)
             return false
         }
@@ -733,6 +743,7 @@ final class BackupManager: ObservableObject {
                         }
                         if self.operationWasCancelled(operationID) {
                             await self.awaitCancellationDrain(operationID)
+                            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
                             self.markOperationCancelled(operationID)
                             continuation.resume(returning: false)
                             return
@@ -742,6 +753,7 @@ final class BackupManager: ObservableObject {
                             continuation.resume(returning: verified)
                             return
                         } else {
+                            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
                             let combinedStderr = [pymobiledeviceStderr, idevicebackupStderr]
                                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                                 .joined(separator: "\n---\n")
@@ -969,6 +981,9 @@ final class BackupManager: ObservableObject {
             return false
         }
 
+        // Snapshot valid existing metadata before pymobiledevice3 / idevicebackup2 mutates the folder
+        Self.stageMetadataGuard(for: udid, in: backupRoot)
+
         // Primary: pymobiledevice3 (without --full flag)
         if PyMobileDevice.available() {
             let success = await createBackupViaPymobiledevice(
@@ -984,6 +999,7 @@ final class BackupManager: ObservableObject {
                 return finalizeSuccessfulBackup(udid: udid, directory: backupRoot, operationID: operationID, onProgress: onProgress)
             }
             if operationWasCancelled(operationID) {
+                Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
                 markOperationCancelled(operationID)
                 return false
             }
@@ -1028,6 +1044,7 @@ final class BackupManager: ObservableObject {
                         }
                         if self.operationWasCancelled(operationID) {
                             await self.awaitCancellationDrain(operationID)
+                            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
                             self.markOperationCancelled(operationID)
                             continuation.resume(returning: false)
                             return
@@ -1037,6 +1054,7 @@ final class BackupManager: ObservableObject {
                             continuation.resume(returning: verified)
                             return
                         } else {
+                            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
                             let combinedStderr = [pymobiledeviceStderr, idevicebackupStderr]
                                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                                 .joined(separator: "\n---\n")
@@ -1105,7 +1123,11 @@ final class BackupManager: ObservableObject {
         let sanitizeResult = Self.sanitizeIncompleteBackup(at: targetPath)
         onProgress("Sanitizing: \(sanitizeResult.filesScanned) scanned, \(sanitizeResult.filesCleaned) cleaned, wal: \(sanitizeResult.walCheckpointed)")
 
+        // Snapshot valid existing metadata before pymobiledevice3 / idevicebackup2 mutates the folder
+        Self.stageMetadataGuard(for: udid, in: backupRoot)
+
         if operationWasCancelled(operationID) {
+            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
             markOperationCancelled(operationID)
             return false
         }
@@ -1128,6 +1150,7 @@ final class BackupManager: ObservableObject {
                 return finalizeSuccessfulBackup(udid: udid, directory: backupRoot, operationID: operationID, onProgress: onProgress)
             }
             if operationWasCancelled(operationID) {
+                Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
                 markOperationCancelled(operationID)
                 return false
             }
@@ -1174,6 +1197,7 @@ final class BackupManager: ObservableObject {
                         }
                         if self.operationWasCancelled(operationID) {
                             await self.awaitCancellationDrain(operationID)
+                            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
                             self.markOperationCancelled(operationID)
                             continuation.resume(returning: false)
                             return
@@ -1183,6 +1207,7 @@ final class BackupManager: ObservableObject {
                             continuation.resume(returning: verified)
                             return
                         } else {
+                            Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
                             let combinedStderr = [pymobiledeviceStderr, idevicebackupStderr]
                                 .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                                 .joined(separator: "\n---\n")

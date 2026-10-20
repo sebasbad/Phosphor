@@ -633,7 +633,14 @@ final class BackupViewModel: ObservableObject {
             var lines: [String] = []
             lines.append("Device: \(backup.deviceName) (\(backup.modelName))")
             lines.append("Identifier: \(backup.deviceIdentityLabel)")
-            lines.append("Status: \(backup.isFullBackup ? "Complete backup" : "Preserved partial backup (resumable)")")
+            switch backup.healthState {
+            case .complete:
+                lines.append("Status: Complete backup (\(backup.isFullBackup ? "single session" : "multi-session / incremental"))")
+            case .paused:
+                lines.append("Status: Paused backup (resumable)")
+            case .broken:
+                lines.append("Status: Broken backup (metadata exists, zero payload files on disk)")
+            }
             lines.append("Path: \(backup.path)")
             lines.append("Last modified: \(backup.dateString) (\(backup.relativeDate))")
             lines.append("Size on disk: \(backup.sizeResolved ? backup.sizeString : "Calculating...")")

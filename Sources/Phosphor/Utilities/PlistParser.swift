@@ -25,6 +25,8 @@ enum PlistParser {
     static func parseBackupInfo(_ backupPath: String) -> BackupInfoPlist? {
         let infoPath = (backupPath as NSString).appendingPathComponent("Info.plist")
         if let dict = parse(infoPath) {
+            let apps = dict["Applications"] as? [String: Any]
+            let installedApps = dict["Installed Applications"] as? [String]
             return BackupInfoPlist(
                 deviceName: dict["Device Name"] as? String ?? "Unknown",
                 displayName: dict["Display Name"] as? String ?? "Unknown",
@@ -38,7 +40,8 @@ enum PlistParser {
                 meid: dict["MEID"] as? String,
                 phoneNumber: dict["Phone Number"] as? String,
                 lastBackupDate: dict["Last Backup Date"] as? Date,
-                isEncrypted: dict["WasPasscodeSet"] as? Bool ?? false
+                isEncrypted: dict["WasPasscodeSet"] as? Bool ?? false,
+                appCount: apps?.count ?? installedApps?.count ?? 0
             )
         }
 
@@ -112,6 +115,7 @@ struct BackupInfoPlist {
     let phoneNumber: String?
     let lastBackupDate: Date?
     let isEncrypted: Bool
+    var appCount: Int = 0
 
     /// Convert product type (e.g., "iPhone14,2") to human-readable name.
     var modelName: String {

@@ -2,6 +2,12 @@ import Foundation
 
 /// Represents an iOS backup stored on disk.
 struct BackupInfo: Identifiable, Hashable, Sendable {
+    enum HealthState: String, Hashable, Sendable {
+        case complete = "Complete"
+        case paused = "Paused"
+        case broken = "Broken"
+    }
+
     let id: String // backup directory name (usually UDID or UDID+timestamp)
     let path: String
     let deviceName: String
@@ -69,22 +75,40 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
         size.formattedFileSize
     }
 
-    /// Whether this backup has sealed metadata and completed snapshot files.
-    var isComplete: Bool {
-        if isFullBackup { return true }
+    /// Deterministic 3-state health classification (Issue #8):
+    /// - `.complete`: Manifest metadata exists, payload buckets (`00`..`ff`) exist at root, no unpromoted `Snapshot/`, and `SnapshotState == "finished"`.
+    /// - `.paused`: Payload files exist in `00`..`ff` or `Snapshot/`, and backup is awaiting resumption (`Snapshot/` exists or `SnapshotState != "finished"`).
+    /// - `.broken`: Metadata files exist (`Info.plist` / `Manifest.db`), but zero payload files exist in `00`..`ff` or `Snapshot/`.
+    var healthState: HealthState {
         let manifestDb = (path as NSString).appendingPathComponent("Manifest.db")
         let manifestPlist = (path as NSString).appendingPathComponent("Manifest.plist")
         let fm = FileManager.default
         let hasManifest = (fm.fileExists(atPath: manifestDb) && ((try? fm.attributesOfItem(atPath: manifestDb)[.size] as? UInt64) ?? 0) > 0) ||
                           (fm.fileExists(atPath: manifestPlist) && ((try? fm.attributesOfItem(atPath: manifestPlist)[.size] as? UInt64) ?? 0) > 0)
-        guard hasManifest else { return false }
+        let hasRootPayload = BackupManager.backupRootHasPayloadData(path)
+        let hasAnyPayload = hasRootPayload || BackupManager.incompleteBackupHasPayloadData(path)
+        guard hasAnyPayload else { return .broken }
+        guard hasManifest else { return .paused }
+
+        let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
+        var isSnapshotDir: ObjCBool = false
+        if fm.fileExists(atPath: snapshotPath, isDirectory: &isSnapshotDir), isSnapshotDir.boolValue,
+           BackupManager.backupRootHasPayloadData(snapshotPath) {
+            return .paused
+        }
+
         let statusPath = (path as NSString).appendingPathComponent("Status.plist")
         guard let data = fm.contents(atPath: statusPath),
               let plist = (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) as? [String: Any],
               let snapshotState = plist["SnapshotState"] as? String else {
-            return false
+            return hasRootPayload ? .paused : .broken
         }
-        return snapshotState.lowercased() == "finished"
+        return (hasRootPayload && snapshotState.lowercased() == "finished") ? .complete : .paused
+    }
+
+    /// Whether this backup has sealed metadata and completed snapshot files.
+    var isComplete: Bool {
+        healthState == .complete
     }
 
     /// Initialize from a backup directory by parsing its plists.
@@ -97,6 +121,18 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
         let manifest = PlistParser.parseManifest(path)
         let size = includeSize ? FileManager.default.directorySize(at: path) : 0
 
+        let manifestDbPath = (path as NSString).appendingPathComponent("Manifest.db")
+        let manifestDbDate = (try? FileManager.default.attributesOfItem(atPath: manifestDbPath)[.modificationDate]) as? Date
+        let resolvedDate: Date? = {
+            if let infoDate = info.lastBackupDate { return infoDate }
+            // If Status.plist is a pre-handshake "BackupState = new" stub from an aborted run,
+            // prefer Manifest.db's modification date over the aborted attempt timestamp.
+            if status?.backupState.lowercased() == "new", let manifestDbDate {
+                return manifestDbDate
+            }
+            return status?.date ?? manifestDbDate
+        }()
+
         return BackupInfo(
             id: dirName,
             path: path,
@@ -106,12 +142,12 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
             iosVersion: info.productVersion,
             serialNumber: info.serialNumber,
             udid: info.udid,
-            lastBackupDate: info.lastBackupDate ?? status?.date,
+            lastBackupDate: resolvedDate,
             isEncrypted: manifest?.isEncrypted ?? info.isEncrypted,
             isFullBackup: status?.isFullBackup ?? false,
             size: size,
             sizeResolved: includeSize,
-            appCount: manifest?.applicationBundleIds.count ?? 0
+            appCount: manifest?.applicationBundleIds.count ?? info.appCount
         )
     }
 

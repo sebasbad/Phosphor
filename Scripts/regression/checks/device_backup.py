@@ -524,14 +524,19 @@ struct BackupInfoPlist {
     let phoneNumber: String?
     let lastBackupDate: Date?
     let isEncrypted: Bool
+    var appCount: Int = 0
     var modelName: String { productType }
 }
-struct BackupStatusProbe { let date: Date?; let isFullBackup: Bool }
+struct BackupStatusProbe { let date: Date?; let isFullBackup: Bool; var backupState: String = "empty"; var snapshotState: String = "finished" }
 struct BackupManifestProbe { let isEncrypted: Bool; let applicationBundleIds: [String] }
 enum PlistParser {
     static func parseBackupInfo(_ path: String) -> BackupInfoPlist? { nil }
     static func parseBackupStatus(_ path: String) -> BackupStatusProbe? { nil }
     static func parseManifest(_ path: String) -> BackupManifestProbe? { nil }
+}
+enum BackupManager {
+    static func backupRootHasPayloadData(_ path: String) -> Bool { false }
+    static func incompleteBackupHasPayloadData(_ path: String) -> Bool { false }
 }
 extension FileManager { func directorySize(at path: String) -> UInt64 { 0 } }
 extension UInt64 { var formattedFileSize: String { "0 B" } }
