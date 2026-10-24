@@ -491,25 +491,27 @@ struct AppExclusionView: View {
                     HStack(spacing: 10) {
                         let isExcluded = excludedRelativePaths.contains(file.relativePath)
                         Toggle("", isOn: Binding(
-                            get: { isExcluded },
-                            set: { shouldExclude in
-                                if shouldExclude {
-                                    excludedRelativePaths.insert(file.relativePath)
-                                } else {
+                            get: { !isExcluded },
+                            set: { isIncluded in
+                                if isIncluded {
                                     excludedRelativePaths.remove(file.relativePath)
+                                } else {
+                                    excludedRelativePaths.insert(file.relativePath)
                                 }
                             }
                         ))
+                        .toggleStyle(.checkbox)
                         .labelsHidden()
 
                         Image(systemName: fileIcon(for: file.fileName))
                             .font(.title3)
-                            .foregroundStyle(Color.brandAccent)
+                            .foregroundStyle(isExcluded ? Color.secondary : Color.brandAccent)
                             .frame(width: 24)
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(file.fileName)
                                 .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(isExcluded ? .secondary : .primary)
                                 .lineLimit(1)
                             Text(file.domain.replacingOccurrences(of: "AppDomain-", with: ""))
                                 .font(.system(size: 10))
@@ -531,7 +533,7 @@ struct AppExclusionView: View {
 
                         Text(ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file))
                             .font(.system(size: 11, weight: .bold, design: .rounded))
-                            .foregroundStyle(file.size > 500_000_000 ? .orange : .primary)
+                            .foregroundStyle(isExcluded ? Color.secondary : (file.size > 500_000_000 ? Color.orange : Color.primary))
                     }
                     .padding(.vertical, 2)
                 }
@@ -650,20 +652,22 @@ struct AppRowView: View {
     var body: some View {
         HStack(spacing: 12) {
             Toggle("", isOn: Binding(
-                get: { isExcluded },
-                set: { onToggle($0) }
+                get: { !isExcluded },
+                set: { isIncluded in onToggle(!isIncluded) }
             ))
+            .toggleStyle(.checkbox)
             .labelsHidden()
 
             Image(systemName: app.isSystemApp ? "apple.logo" : "app.fill")
                 .font(.title3)
-                .foregroundStyle(app.isSystemApp ? .secondary : Color.brandAccent)
+                .foregroundStyle(isExcluded ? Color.secondary : (app.isSystemApp ? Color.secondary : Color.brandAccent))
                 .frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(app.displayName)
                         .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(isExcluded ? .secondary : .primary)
                     if app.isSystemApp {
                         Text("Apple")
                             .font(.system(size: 9, weight: .bold))
@@ -693,7 +697,7 @@ struct AppRowView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(app.formattedDynamicSize)
                     .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(app.dynamicDiskBytes > 1_000_000_000 ? .orange : .primary)
+                    .foregroundStyle(isExcluded ? Color.secondary : (app.dynamicDiskBytes > 1_000_000_000 ? Color.orange : Color.primary))
                 if app.staticDiskBytes > 0 {
                     Text("Total: \(app.formattedTotalSize)")
                         .font(.system(size: 9))
