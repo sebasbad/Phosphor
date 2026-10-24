@@ -553,9 +553,7 @@ final class BackupManager: ObservableObject {
     }
 
     /// Restores an archived snapshot (`<UDID>-phosphor-bkp-YYYYMMDD-HHmmss`) back to the primary
-    /// `<UDID>` backup slot. If an active `<UDID>` folder already exists on disk, it is first
-    /// preserved into a timestamped archive (`<UDID>-phosphor-bkp-<timestamp>`) before promoting
-    /// the selected archived snapshot.
+    /// `<UDID>` backup slot. Only permitted when no active `<UDID>` folder exists on disk.
     nonisolated static func unarchiveBackup(_ backup: BackupInfo, in directory: String? = nil) throws -> String {
         guard backup.isArchivedSnapshot, !backup.udid.isEmpty else {
             throw NSError(domain: "Phosphor.Backup", code: 10, userInfo: [
@@ -573,16 +571,10 @@ final class BackupManager: ObservableObject {
             ])
         }
 
-        if fm.fileExists(atPath: activePath, isDirectory: &isDir), isDir.boolValue {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyyMMdd-HHmmss"
-            var timestamp = formatter.string(from: Date())
-            var swapPath = (parentDir as NSString).appendingPathComponent("\(backup.udid)-phosphor-bkp-\(timestamp)")
-            if swapPath == backup.path || fm.fileExists(atPath: swapPath) {
-                timestamp += "-prev"
-                swapPath = (parentDir as NSString).appendingPathComponent("\(backup.udid)-phosphor-bkp-\(timestamp)")
-            }
-            try fm.moveItem(atPath: activePath, toPath: swapPath)
+        guard !fm.fileExists(atPath: activePath) else {
+            throw NSError(domain: "Phosphor.Backup", code: 12, userInfo: [
+                NSLocalizedDescriptionKey: "An active backup folder already exists for this device (\(backup.udid)). Delete the existing active backup first before unarchiving a snapshot."
+            ])
         }
 
         try fm.moveItem(atPath: backup.path, toPath: activePath)
