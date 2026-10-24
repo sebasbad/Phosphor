@@ -1058,29 +1058,40 @@ struct BackupRow: View {
                     .tint(isStalled ? .orange : (isQuiet ? .secondary : .brandAccent))
 
             HStack(spacing: 6) {
+                let pct = Int(activity.displayProgressFraction * 100)
                 let statusText: String = {
                     if isStalled {
-                        return "Quiet (>5 min) · Device may be processing large files"
+                        return "Quiet (>5 min) · Device may be processing large files (\(pct)%)"
                     }
                     if isQuiet {
-                        return "Waiting for device response… (\(activity.progressText))"
+                        let quietSecs = max(1, Int(Date().timeIntervalSince(activity.lastProgressUpdate)))
+                        return "Waiting for device response… (\(quietSecs)s quiet · \(pct)%)"
                     }
                     if activity.isFinalizing {
-                        let pct = Int(activity.displayProgressFraction * 100)
                         return "Finalizing & sealing (\(pct)%)"
                     }
-                    return activity.progressText
+                    if activity.isResume {
+                        return "Resuming (\(pct)%)"
+                    }
+                    return "Backing up (\(pct)%)"
                 }()
                 Text(statusText)
-                    .font(.system(size: 10))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(isStalled ? Color.orange : Color.secondary)
                     .lineLimit(1)
-                if let speed = activity.speed {
+                if let speed = activity.speed, !speed.isEmpty {
                     Text("· Speed: \(speed)")
-                    if let eta = activity.eta { Text("· Est. Remaining: \(eta)") }
+                }
+                if let eta = activity.eta, !eta.isEmpty {
+                    Text("· Est. Remaining: \(eta)")
+                } else if let predicted = activity.predictiveETA,
+                          predicted.confidence != .none,
+                          predicted.estimatedSeconds > 0 {
+                    Text("· Est. Remaining: ~\(Self.formatDuration(predicted.estimatedSeconds))")
                 }
             }
             .font(.system(size: 10))
+            .foregroundStyle(.secondary)
 
             if let phase = activity.phaseMetrics?.phase {
                 let phaseText = activity.phaseMetrics?.phaseDetail?.description ?? phase.displayName
@@ -1095,7 +1106,10 @@ struct BackupRow: View {
                             let remaining = max(0, total - transferred)
                             Text("· Files: \(transferred.formatted()) / \(total.formatted()) (\(remaining.formatted()) left)")
                         }
-                        if let bytes = phaseMetrics.bytesTransferred, let totalB = phaseMetrics.totalBytes, totalB > 0 {
+                        if activity.phaseMetrics?.phaseDetail == nil,
+                           let bytes = phaseMetrics.bytesTransferred,
+                           let totalB = phaseMetrics.totalBytes,
+                           totalB > 0 {
                             Text("· Data: \(bytes.formattedFileSize) / \(totalB.formattedFileSize)")
                         }
                     }
@@ -1116,23 +1130,8 @@ struct BackupRow: View {
                 .foregroundStyle(.secondary)
             }
 
-            if let predicted = activity.predictiveETA,
-               predicted.confidence != .none,
-               predicted.estimatedSeconds > 0 {
-                Text("Predicted Remaining: \(Self.formatDuration(predicted.estimatedSeconds)) (\(predicted.confidence.rawValue) confidence)")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-            }
-
-            if let metrics = activity.finalizationMetrics {
+            if let metrics = activity.finalizationMetrics, activity.phaseMetrics?.phaseDetail == nil {
                 Text("Finalizing: \(metrics.filesMoved.formatted()) / ~\(metrics.totalFiles.formatted()) files moved")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-            }
-
-            if isQuiet {
-                let quietSecs = Int(Date().timeIntervalSince(activity.lastProgressUpdate))
-                Text("Device response quiet for \(quietSecs)s · Transfer is still running in background")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
             }
