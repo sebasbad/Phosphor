@@ -12,8 +12,7 @@ struct AppExclusionView: View {
 
     enum ViewTab: String, CaseIterable, Identifiable {
         case byApp = "Applications"
-        case fileRules = "File Rules"
-        case largestFiles = "Largest Files"
+        case fileRules = "File & Media Rules"
 
         var id: String { rawValue }
     }
@@ -33,13 +32,6 @@ struct AppExclusionView: View {
     @State private var excludeAppCaches: Bool = false
     @State private var customPatternInput: String = ""
     @State private var excludedFilePatterns: [String] = []
-
-    // Largest Files Explorer State
-    @State private var largestFiles: [BackupManifest.FileEntry] = []
-    @State private var isLoadingFiles = false
-    @State private var fileSearchText = ""
-    @State private var excludedRelativePaths: Set<String> = []
-    @State private var manifestAvailable = false
 
     enum SortOption: String, CaseIterable, Identifiable {
         case sizeDescending = "Largest Total Size"
@@ -82,17 +74,6 @@ struct AppExclusionView: View {
         }
     }
 
-    var filteredFiles: [BackupManifest.FileEntry] {
-        if fileSearchText.isEmpty {
-            return largestFiles
-        }
-        return largestFiles.filter {
-            $0.fileName.localizedCaseInsensitiveContains(fileSearchText) ||
-            $0.domain.localizedCaseInsensitiveContains(fileSearchText) ||
-            $0.relativePath.localizedCaseInsensitiveContains(fileSearchText)
-        }
-    }
-
     var totalExcludedBytes: Int64 {
         apps.filter { excludedBundleIds.contains($0.id) }
             .reduce(0) { $0 + $1.dynamicDiskBytes }
@@ -124,7 +105,7 @@ struct AppExclusionView: View {
                 VStack(spacing: 2) {
                     Text("Profile Details & Custom Inclusions")
                         .font(.headline.weight(.semibold))
-                    Text("Review apps, media rules, and individual file exclusions")
+                    Text("Review apps and media rules to customize what is backed up")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -206,8 +187,6 @@ struct AppExclusionView: View {
                 appsTabContent
             case .fileRules:
                 fileRulesTabContent
-            case .largestFiles:
-                largestFilesTabContent
             }
         }
         .task {
@@ -419,187 +398,17 @@ struct AppExclusionView: View {
         }
     }
 
-    // MARK: - Tab 3: Largest Files Explorer
-
-    private var largestFilesTabContent: some View {
-        VStack(spacing: 0) {
-            if isLoadingFiles {
-                VStack(spacing: 16) {
-                    ProgressView()
-                    Text("Reading Manifest database for largest app files...")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if !manifestAvailable {
-                VStack(spacing: 12) {
-                    Image(systemName: "doc.badge.gearshape")
-                        .font(.system(size: 36))
-                        .foregroundStyle(.secondary)
-                    Text("No Prior Local Backup Found")
-                        .font(.headline)
-                    Text("The Largest Files Explorer catalogs files from your existing backup. Run an initial backup or use File Rules to pre-filter media.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 40)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if filteredFiles.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 36))
-                        .foregroundStyle(.secondary)
-                    Text("No Matching Files Found")
-                        .font(.headline)
-                    Text("Try clearing the search query.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                HStack(spacing: 12) {
-                    HStack {
-                        Image(systemName: "magnifyingglass")
-                            .foregroundStyle(.secondary)
-                        TextField("Search files by name or path...", text: $fileSearchText)
-                            .textFieldStyle(.plain)
-                        if !fileSearchText.isEmpty {
-                            Button {
-                                fileSearchText = ""
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-
-                    Text("\(filteredFiles.count) largest files")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-
-                Divider()
-
-                List(filteredFiles) { file in
-                    HStack(spacing: 10) {
-                        let isExcluded = excludedRelativePaths.contains(file.relativePath)
-                        Toggle("", isOn: Binding(
-                            get: { !isExcluded },
-                            set: { isIncluded in
-                                if isIncluded {
-                                    excludedRelativePaths.remove(file.relativePath)
-                                } else {
-                                    excludedRelativePaths.insert(file.relativePath)
-                                }
-                            }
-                        ))
-                        .toggleStyle(.checkbox)
-                        .labelsHidden()
-
-                        Image(systemName: fileIcon(for: file.fileName))
-                            .font(.title3)
-                            .foregroundStyle(isExcluded ? Color.secondary : Color.brandAccent)
-                            .frame(width: 24)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(file.fileName)
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(isExcluded ? .secondary : .primary)
-                                .lineLimit(1)
-                            Text(file.domain.replacingOccurrences(of: "AppDomain-", with: ""))
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-
-                        Spacer()
-
-                        Text(isExcluded ? "Excluded" : "Included")
-                            .font(.system(size: 9, weight: .bold))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(
-                                isExcluded ? Color.red.opacity(0.12) : Color.green.opacity(0.12),
-                                in: RoundedRectangle(cornerRadius: 4)
-                            )
-                            .foregroundStyle(isExcluded ? Color.red : Color.green)
-
-                        Text(ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file))
-                            .font(.system(size: 11, weight: .bold, design: .rounded))
-                            .foregroundStyle(isExcluded ? Color.secondary : (file.size > 500_000_000 ? Color.orange : Color.primary))
-                    }
-                    .padding(.vertical, 2)
-                }
-                .listStyle(.inset)
-            }
-        }
-    }
-
-    private func fileIcon(for name: String) -> String {
-        let ext = (name as NSString).pathExtension.lowercased()
-        switch ext {
-        case "mp4", "mkv", "mov", "avi", "webm", "m4v":
-            return "video.fill"
-        case "mp3", "flac", "wav", "m4a":
-            return "music.note"
-        case "sqlite", "db", "sqlitedb":
-            return "cylinder.split.1x2.fill"
-        case "plist", "json", "xml":
-            return "doc.badge.gearshape"
-        case "jpg", "jpeg", "png", "heic":
-            return "photo.fill"
-        default:
-            return "doc.fill"
-        }
-    }
-
     private func loadInitialData() {
         excludedBundleIds = configuration.excludedBundleIds
         excludeMediaAbove50MB = configuration.excludeMediaAbove50MB
         excludeAppCaches = configuration.excludeAppCaches
         excludedFilePatterns = configuration.excludedFilePatterns
-        excludedRelativePaths = configuration.excludedRelativePaths
 
         Task {
             let targets = await appManager.listInstalledAppsWithSizes(udid: udid)
             await MainActor.run {
                 self.apps = targets
                 self.isLoading = false
-            }
-        }
-
-        loadManifestFiles()
-    }
-
-    private func loadManifestFiles() {
-        let targetBackupPath = (backupDirectory as NSString).appendingPathComponent(udid)
-        guard FileManager.default.fileExists(atPath: (targetBackupPath as NSString).appendingPathComponent("Manifest.db")) else {
-            manifestAvailable = false
-            return
-        }
-
-        isLoadingFiles = true
-        Task.detached {
-            do {
-                let manifest = try BackupManifest(backupPath: targetBackupPath)
-                let files = try manifest.largestAppFiles(limit: 100)
-                await MainActor.run {
-                    self.largestFiles = files
-                    self.manifestAvailable = true
-                    self.isLoadingFiles = false
-                }
-            } catch {
-                await MainActor.run {
-                    self.manifestAvailable = false
-                    self.isLoadingFiles = false
-                }
             }
         }
     }
@@ -619,7 +428,6 @@ struct AppExclusionView: View {
         configuration.excludeMediaAbove50MB = excludeMediaAbove50MB
         configuration.excludeAppCaches = excludeAppCaches
         configuration.excludedFilePatterns = excludedFilePatterns
-        configuration.excludedRelativePaths = excludedRelativePaths
         configuration.save(for: udid)
         onDismiss()
     }
