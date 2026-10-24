@@ -70,6 +70,15 @@ struct AppExclusionView: View {
             }
         case .dynamicDescending:
             return result.sorted {
+                // Pin apps with unreported shared App Group data (e.g. WhatsApp) to top so they aren't buried
+                let u0 = $0.isDynamicSizeUnreported
+                let u1 = $1.isDynamicSizeUnreported
+                if u0 != u1 { return u0 && !u1 }
+                if u0 && u1 {
+                    let s0 = $0.staticDiskBytes
+                    let s1 = $1.staticDiskBytes
+                    if s0 != s1 { return s0 > s1 }
+                }
                 let d0 = $0.effectiveDynamicBytes
                 let d1 = $1.effectiveDynamicBytes
                 if d0 != d1 { return d0 > d1 }
@@ -84,6 +93,14 @@ struct AppExclusionView: View {
 
     var visibleApps: [AppBackupTarget] {
         apps.filter { showAppleApps || !$0.isSystemApp }
+    }
+
+    var unreportedDataAppsCount: Int {
+        visibleApps.filter(\.isDynamicSizeUnreported).count
+    }
+
+    var excludedUnreportedDataAppsCount: Int {
+        apps.filter { excludedBundleIds.contains($0.id) && $0.isDynamicSizeUnreported }.count
     }
 
     var totalAppsBytes: Int64 {
@@ -105,21 +122,33 @@ struct AppExclusionView: View {
 
     var formattedTotalAppsSize: String {
         guard hasAnySizesResolved else { return "Calculating..." }
-        return ByteCountFormatter.string(fromByteCount: totalAppsBytes, countStyle: .file)
+        let base = ByteCountFormatter.string(fromByteCount: totalAppsBytes, countStyle: .file)
+        if unreportedDataAppsCount > 0 {
+            return "\(base)+ (\(unreportedDataAppsCount) unreported data)"
+        }
+        return base
     }
 
     var formattedSavings: String {
         guard hasAnySizesResolved else { return "Calculating..." }
-        return ByteCountFormatter.string(fromByteCount: totalExcludedBytes, countStyle: .file)
+        let base = ByteCountFormatter.string(fromByteCount: totalExcludedBytes, countStyle: .file)
+        if excludedUnreportedDataAppsCount > 0 {
+            if totalExcludedBytes == 0 {
+                return "+\(excludedUnreportedDataAppsCount) unreported data"
+            }
+            return "\(base)+"
+        }
+        return base
     }
 
     var excludedPercentageString: String? {
         guard hasAnySizesResolved, totalAppsBytes > 0, totalExcludedBytes > 0 else { return nil }
         let percentage = (Double(totalExcludedBytes) / Double(totalAppsBytes)) * 100.0
+        let prefix = (unreportedDataAppsCount > 0 || excludedUnreportedDataAppsCount > 0) ? "≥" : ""
         if percentage < 0.1 {
             return "<0.1%"
         }
-        return String(format: "%.1f%%", percentage)
+        return String(format: "%@%.1f%%", prefix, percentage)
     }
 
     var body: some View {
@@ -530,12 +559,27 @@ struct AppRowView: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 2) {
-                Text(app.formattedDynamicSize)
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(isExcluded ? Color.secondary : (app.effectiveDynamicBytes > 1_000_000_000 ? Color.orange : Color.primary))
-                Text(app.effectiveTotalBytes > 0 ? "Total: \(app.formattedTotalSize)" : "Data & Cache")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+                if app.isDynamicSizeUnreported {
+                    HStack(spacing: 4) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 10))
+                        Text("Data size unknown")
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                    }
+                    .foregroundStyle(isExcluded ? Color.secondary : Color.orange)
+                    .help("iOS does not report live container sizes for apps that store data in shared App Groups.")
+
+                    Text("App binary: \(app.formattedStaticSize) • App Group")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                } else {
+                    Text(app.formattedDynamicSize)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(isExcluded ? Color.secondary : (app.effectiveDynamicBytes > 1_000_000_000 ? Color.orange : Color.primary))
+                    Text(app.effectiveTotalBytes > 0 ? "Total: \(app.formattedTotalSize)" : "Data & Cache")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
             }
         }
         .padding(.vertical, 2)
