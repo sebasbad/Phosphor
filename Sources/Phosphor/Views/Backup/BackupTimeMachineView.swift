@@ -83,10 +83,10 @@ struct BackupTimeMachineView: View {
             isPresented: restoreConfirmationPresented,
             presenting: pendingRestore
         ) { request in
-            Button("Cancel", role: .cancel) {}
-            Button("Restore", role: .destructive) {
+            Button("Restore") {
                 performRestore(request)
             }
+            Button("Cancel", role: .cancel) {}
         } message: { request in
             Text("Restore \(request.targetName) · ID …\(request.targetUDID.suffix(8)) using \(request.backup.deviceIdentityLabel) from \(request.backup.dateString)? The target device will restart, and this cannot be undone.")
         }
