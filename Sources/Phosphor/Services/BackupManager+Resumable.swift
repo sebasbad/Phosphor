@@ -146,6 +146,11 @@ extension BackupManager {
                 }
             }
         }
+        // Once target plists are verified or restored and no Snapshot/ staging is active,
+        // remove the temporary guard folder so it never lingers as an orphan on disk.
+        if !hasActiveSnapshot && looksLikeBackupFolder(targetDir) {
+            try? fm.removeItem(atPath: guardDir)
+        }
         return restoredCount
     }
 
@@ -174,6 +179,7 @@ extension BackupManager {
 
         do {
             try fm.moveItem(atPath: path, toPath: quarantinePath)
+            commitMetadataGuard(for: dirName, in: parentDir)
             return quarantinePath
         } catch {
             return nil

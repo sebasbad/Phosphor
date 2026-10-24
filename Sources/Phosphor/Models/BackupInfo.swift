@@ -76,6 +76,14 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
         size.formattedFileSize
     }
 
+    /// True when this backup folder is a timestamped historical archive
+    /// (e.g., `<UDID>-phosphor-bkp-YYYYMMDD-HHmmss` or Finder `<UDID>-YYYYMMDD-HHmmss`)
+    /// rather than the primary mutable `<UDID>` slot.
+    var isArchivedSnapshot: Bool {
+        guard !udid.isEmpty, !id.isEmpty else { return false }
+        return id != udid
+    }
+
     /// Deterministic 3-state health classification (Issue #8):
     /// - `.complete`: Manifest metadata exists, payload buckets (`00`..`ff`) exist at root, no unpromoted `Snapshot/`, and `SnapshotState == "finished"`.
     /// - `.paused`: Payload files exist in `00`..`ff` or `Snapshot/`, and backup is awaiting resumption (`Snapshot/` exists or `SnapshotState != "finished"`).

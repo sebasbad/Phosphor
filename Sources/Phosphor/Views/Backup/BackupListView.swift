@@ -92,7 +92,7 @@ struct BackupListView: View {
                     ForEach(backupVM.backups) { backup in
                         BackupRow(
                             backup: backup,
-                            activity: backupVM.activity(for: backup.udid),
+                            activity: backup.isArchivedSnapshot ? nil : backupVM.activity(for: backup.udid),
                             isDeviceConnected: deviceVM.devices.contains(where: { $0.id == backup.udid })
                         ) {
                             if backupVM.openBackupBrowser(backup) {
@@ -1176,6 +1176,11 @@ struct BackupRow: View {
                             .help("Encrypted backup")
                     }
 
+                    if backup.isArchivedSnapshot {
+                        StatusChip(text: "Archived", color: .secondary, icon: "archivebox.fill")
+                            .help("Preserved historical snapshot (\(backup.id))")
+                    }
+
                     switch backup.healthState {
                     case .complete:
                         StatusChip(text: "Full", color: .brandAccent)
@@ -1254,23 +1259,27 @@ struct BackupRow: View {
                     case .complete:
                         EmptyView()
                     case .paused:
-                        Button("Resume", action: onResume)
-                            .buttonStyle(.borderedProminent)
-                            .tint(.orange)
-                            .controlSize(.small)
-                            .disabled(!isDeviceConnected)
-                            .help(isDeviceConnected
-                                ? "Resume paused backup from saved progress"
-                                : "Connect \(backup.deviceName) to resume this backup")
+                        if !backup.isArchivedSnapshot {
+                            Button("Resume", action: onResume)
+                                .buttonStyle(.borderedProminent)
+                                .tint(.orange)
+                                .controlSize(.small)
+                                .disabled(!isDeviceConnected)
+                                .help(isDeviceConnected
+                                    ? "Resume paused backup from saved progress"
+                                    : "Connect \(backup.deviceName) to resume this backup")
+                        }
                     case .broken:
-                        Button("Repair", action: onRepair)
-                            .buttonStyle(.borderedProminent)
-                            .tint(.orange)
-                            .controlSize(.small)
-                            .disabled(!isDeviceConnected)
-                            .help(isDeviceConnected
-                                ? "Quarantine this broken folder and start a clean full backup"
-                                : "Connect \(backup.deviceName) to repair this backup")
+                        if !backup.isArchivedSnapshot {
+                            Button("Repair", action: onRepair)
+                                .buttonStyle(.borderedProminent)
+                                .tint(.orange)
+                                .controlSize(.small)
+                                .disabled(!isDeviceConnected)
+                                .help(isDeviceConnected
+                                    ? "Quarantine this broken folder and start a clean full backup"
+                                    : "Connect \(backup.deviceName) to repair this backup")
+                        }
                         Button("Delete", role: .destructive, action: onDelete)
                             .buttonStyle(.bordered)
                             .controlSize(.small)

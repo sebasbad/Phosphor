@@ -25,6 +25,8 @@ def test_backup_profile_models_and_regex_generation(root: Path) -> None:
     assert_contains(config_src, "struct DeviceBackupConfiguration", "DeviceBackupConfiguration model must exist")
     assert_contains(config_src, "func save(for udid: String)", "DeviceBackupConfiguration must support saving per UDID")
     assert_contains(config_src, "static func load(for udid: String)", "DeviceBackupConfiguration must support loading per UDID")
+    assert_contains(config_src, "static func inferFromExistingBackup", "DeviceBackupConfiguration must infer profile portably from Manifest.db")
+    assert_contains(config_src, "func isCompatibleForIncremental", "DeviceBackupConfiguration must validate incremental compatibility")
 
     assert_contains(target_src, "struct AppBackupTarget", "AppBackupTarget struct must exist")
     assert_contains(target_src, "let dynamicDiskBytes: Int64", "AppBackupTarget must track dynamic data bytes")
@@ -41,6 +43,8 @@ def test_backup_engine_supports_domain_filtering_and_patching(root: Path) -> Non
 
     assert_contains(bm_src, "configuration: DeviceBackupConfiguration?", "BackupManager must accept configuration")
     assert_contains(bm_src, "config.profileType.preservationRegex", "BackupManager must extract domain preservation regex")
+    assert_contains(bm_src, "static func cloneBackupSnapshot", "BackupManager must support APFS CoW pre-incremental snapshots")
+    assert_contains(bm_src, "Darwin.clonefile", "BackupManager must use APFS clonefile(2) for zero-extra-space snapshots")
 
 
 def test_app_exclusion_sheet_and_profile_selector_views_exist(root: Path) -> None:
