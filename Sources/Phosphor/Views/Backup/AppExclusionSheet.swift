@@ -148,77 +148,86 @@ struct AppExclusionView: View {
 
     private var appsTabContent: some View {
         VStack(spacing: 0) {
-            // Controls: Filter, Search, Sort & Presets
-            HStack(spacing: 10) {
-                Picker("Show", selection: $statusFilter) {
-                    Text("All (\(apps.filter { showAppleApps || !$0.isSystemApp }.count))").tag(StatusFilter.all)
-                    Text("Included (\(apps.filter { (showAppleApps || !$0.isSystemApp) && !excludedBundleIds.contains($0.id) }.count))").tag(StatusFilter.included)
-                    Text("Excluded (\(apps.filter { (showAppleApps || !$0.isSystemApp) && excludedBundleIds.contains($0.id) }.count))").tag(StatusFilter.excluded)
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 320)
+            // Controls: Filter, Search, Sort & Presets (2-Row macOS Layout)
+            VStack(spacing: 8) {
+                // Row 1: Status Filter Segmented Control & Bulk Actions
+                HStack(spacing: 12) {
+                    Picker("Show", selection: $statusFilter) {
+                        Text("All (\(apps.filter { showAppleApps || !$0.isSystemApp }.count))").tag(StatusFilter.all)
+                        Text("Included (\(apps.filter { (showAppleApps || !$0.isSystemApp) && !excludedBundleIds.contains($0.id) }.count))").tag(StatusFilter.included)
+                        Text("Excluded (\(apps.filter { (showAppleApps || !$0.isSystemApp) && excludedBundleIds.contains($0.id) }.count))").tag(StatusFilter.excluded)
+                    }
+                    .pickerStyle(.segmented)
 
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                    TextField("Filter...", text: $searchText)
-                        .textFieldStyle(.plain)
-                    if !searchText.isEmpty {
-                        Button {
-                            searchText = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+
+                    Menu("Bulk Actions") {
+                        Button("Exclude Apps > 5 GB") {
+                            excludeAppsAbove(bytes: 5 * 1024 * 1024 * 1024)
                         }
-                        .buttonStyle(.plain)
+                        Button("Exclude Apps > 2 GB") {
+                            excludeAppsAbove(bytes: 2 * 1024 * 1024 * 1024)
+                        }
+                        Button("Exclude Apps > 1 GB") {
+                            excludeAppsAbove(bytes: 1 * 1024 * 1024 * 1024)
+                        }
+                        Button("Exclude Apps > 500 MB") {
+                            excludeAppsAbove(bytes: 500 * 1024 * 1024)
+                        }
+                        Button("Exclude Apps > 100 MB") {
+                            excludeAppsAbove(bytes: 100 * 1024 * 1024)
+                        }
+                        Divider()
+                        Button("Exclude All User Apps") {
+                            let userApps = apps.filter { !$0.isSystemApp }
+                            excludedBundleIds.formUnion(userApps.map(\.id))
+                        }
+                        Button("Exclude All Listed Apps") {
+                            excludedBundleIds = Set(filteredApps.map(\.id))
+                        }
+                        Button("Include All Apps (Reset)") {
+                            excludedBundleIds.removeAll()
+                        }
                     }
+                    .menuStyle(.borderedButton)
+                    .controlSize(.small)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
 
-                Toggle(isOn: $showAppleApps) {
-                    Text("Apple")
-                        .font(.system(size: 11))
-                }
-                .toggleStyle(.checkbox)
-                .help("Show pre-installed Apple stock applications")
+                // Row 2: Search Bar, Apple Apps Toggle, Sort Dropdown
+                HStack(spacing: 10) {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundStyle(.secondary)
+                        TextField("Search apps or bundle ID...", text: $searchText)
+                            .textFieldStyle(.plain)
+                        if !searchText.isEmpty {
+                            Button {
+                                searchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
 
-                Picker("Sort", selection: $sortOption) {
-                    ForEach(SortOption.allCases) { opt in
-                        Text(opt.rawValue).tag(opt)
+                    Toggle(isOn: $showAppleApps) {
+                        Text("Apple Apps")
+                            .font(.system(size: 11))
                     }
-                }
-                .pickerStyle(.menu)
-                .frame(width: 150)
+                    .toggleStyle(.checkbox)
+                    .help("Show pre-installed Apple stock applications")
 
-                Menu("Bulk Actions") {
-                    Button("Exclude Apps > 5 GB") {
-                        excludeAppsAbove(bytes: 5 * 1024 * 1024 * 1024)
+                    Picker("Sort", selection: $sortOption) {
+                        ForEach(SortOption.allCases) { opt in
+                            Text(opt.rawValue).tag(opt)
+                        }
                     }
-                    Button("Exclude Apps > 2 GB") {
-                        excludeAppsAbove(bytes: 2 * 1024 * 1024 * 1024)
-                    }
-                    Button("Exclude Apps > 1 GB") {
-                        excludeAppsAbove(bytes: 1 * 1024 * 1024 * 1024)
-                    }
-                    Button("Exclude Apps > 500 MB") {
-                        excludeAppsAbove(bytes: 500 * 1024 * 1024)
-                    }
-                    Button("Exclude Apps > 100 MB") {
-                        excludeAppsAbove(bytes: 100 * 1024 * 1024)
-                    }
-                    Divider()
-                    Button("Exclude All User Apps") {
-                        let userApps = apps.filter { !$0.isSystemApp }
-                        excludedBundleIds.formUnion(userApps.map(\.id))
-                    }
-                    Button("Exclude All Listed Apps") {
-                        excludedBundleIds = Set(filteredApps.map(\.id))
-                    }
-                    Button("Include All Apps (Reset)") {
-                        excludedBundleIds.removeAll()
-                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 170)
                 }
             }
             .padding(.horizontal, 20)
