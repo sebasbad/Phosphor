@@ -320,6 +320,43 @@ extension BackupManager {
         return IncompleteBackupStats(fileCount: count, totalBytes: totalBytes, lastModified: latestDate)
     }
 
+    /// Returns the most recent file modification timestamp inside the active backup directory
+    /// (`Snapshot/` or root `00..ff` / metadata plists) so the liveness monitor knows when disk I/O
+    /// is actively occurring even if the CLI tool has not emitted a new stderr progress line yet.
+    nonisolated static func latestBackupDiskActivityDate(for udid: String, in directory: String? = nil) -> Date? {
+        let fm = FileManager.default
+        let path = backupPath(for: udid, in: directory)
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
+
+        var newestDate: Date?
+        let updateNewest: (String) -> Void = { itemPath in
+            if let attrs = try? fm.attributesOfItem(atPath: itemPath),
+               let mod = attrs[.modificationDate] as? Date {
+                if newestDate == nil || mod > newestDate! {
+                    newestDate = mod
+                }
+            }
+        }
+
+        updateNewest(path)
+        for meta in ["Status.plist", "Info.plist", "Manifest.db", "Manifest.db-wal", "Manifest.plist"] {
+            updateNewest((path as NSString).appendingPathComponent(meta))
+        }
+
+        let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
+        let targetDir = fm.fileExists(atPath: snapshotPath, isDirectory: &isDir) && isDir.boolValue ? snapshotPath : path
+        updateNewest(targetDir)
+
+        if let subdirs = try? fm.contentsOfDirectory(atPath: targetDir) {
+            for sub in subdirs where sub.count == 2 {
+                if Task.isCancelled { return newestDate }
+                updateNewest((targetDir as NSString).appendingPathComponent(sub))
+            }
+        }
+        return newestDate
+    }
+
     /// Samples the currently written domain by finding the most recently modified
     /// file in the active backup directory and resolving its domain from Manifest.db.
     /// Returns nil if no Manifest.db exists yet or if the file cannot be mapped.
