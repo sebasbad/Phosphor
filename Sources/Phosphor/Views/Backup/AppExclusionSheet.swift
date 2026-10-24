@@ -82,13 +82,35 @@ struct AppExclusionView: View {
         }
     }
 
+    var visibleApps: [AppBackupTarget] {
+        apps.filter { showAppleApps || !$0.isSystemApp }
+    }
+
+    var totalAppsBytes: Int64 {
+        visibleApps.reduce(0) { $0 + $1.effectiveTotalBytes }
+    }
+
+    var totalDynamicBytes: Int64 {
+        visibleApps.reduce(0) { $0 + $1.effectiveDynamicBytes }
+    }
+
+    var hasAnySizesResolved: Bool {
+        apps.contains(where: \.isSizeResolved)
+    }
+
     var totalExcludedBytes: Int64 {
         apps.filter { excludedBundleIds.contains($0.id) }
             .reduce(0) { $0 + $1.effectiveDynamicBytes }
     }
 
+    var formattedTotalAppsSize: String {
+        guard hasAnySizesResolved else { return "Calculating..." }
+        return ByteCountFormatter.string(fromByteCount: totalAppsBytes, countStyle: .file)
+    }
+
     var formattedSavings: String {
-        ByteCountFormatter.string(fromByteCount: totalExcludedBytes, countStyle: .file)
+        guard hasAnySizesResolved else { return "Calculating..." }
+        return ByteCountFormatter.string(fromByteCount: totalExcludedBytes, countStyle: .file)
     }
 
     var body: some View {
@@ -305,6 +327,41 @@ struct AppExclusionView: View {
                     )
                 }
                 .listStyle(.inset)
+
+                // Footer Status Bar: Total Apps Size & Excluded Apps Size Summary
+                Divider()
+                HStack(spacing: 16) {
+                    HStack(spacing: 5) {
+                        Text("Total App Footprint:")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Text(formattedTotalAppsSize)
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.primary)
+                    }
+
+                    Text("•")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+
+                    HStack(spacing: 5) {
+                        Text("Excluded:")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        Text(excludedBundleIds.isEmpty ? "None (0 B)" : "\(excludedBundleIds.count) apps (\(formattedSavings))")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(excludedBundleIds.isEmpty ? Color.secondary : Color.orange)
+                    }
+
+                    Spacer()
+
+                    Text("\(visibleApps.count) apps listed")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color.primary.opacity(0.03))
             }
         }
     }
