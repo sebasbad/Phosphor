@@ -99,8 +99,21 @@ struct BackupListView: View {
                                 onBrowseBackup()
                             }
                         } onDelete: {
-                            backupToDelete = backup
+                            let latest = backupVM.backups.first(where: { $0.id == backup.id }) ?? backup
+                            backupToDelete = latest
                             showDeleteConfirm = true
+                            if !latest.sizeResolved || latest.size == 0 {
+                                let targetPath = latest.path
+                                let targetId = latest.id
+                                Task.detached(priority: .userInitiated) {
+                                    let computed = FileManager.default.directorySize(at: targetPath)
+                                    await MainActor.run {
+                                        if backupToDelete?.id == targetId {
+                                            backupToDelete = backupToDelete?.withSize(computed)
+                                        }
+                                    }
+                                }
+                            }
                         } onResume: {
                             Task { await backupVM.restartStalledBackup(udid: backup.udid, device: deviceVM.devices.first(where: { $0.id == backup.udid })) }
                         } onRepair: {
@@ -117,15 +130,27 @@ struct BackupListView: View {
             }
         }
         .alert("Delete Backup?", isPresented: $showDeleteConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
+            Button("Delete") {
                 if let backup = backupToDelete {
                     backupVM.deleteBackup(backup)
                 }
             }
+            Button("Cancel", role: .cancel) {}
         } message: {
             if let backup = backupToDelete {
-                Text("This will permanently delete \(backup.deviceIdentityLabel) (\(backup.sizeResolved ? backup.sizeString : "size calculating")). This cannot be undone.")
+                let current = backupVM.backups.first(where: { $0.id == backup.id }) ?? backup
+                let resolvedSize = current.size > 0 ? current.size : backup.size
+                let sizeLabel: String = {
+                    if resolvedSize > 0 {
+                        return resolvedSize.formattedFileSize
+                    }
+                    if !current.sizeResolved && !backup.sizeResolved {
+                        return "Calculating…"
+                    }
+                    return "Empty or incomplete"
+                }()
+                let stateLabel = current.isArchivedSnapshot ? "Archived (\(current.healthState.rawValue))" : current.healthState.rawValue
+                Text("Permanently delete the \(stateLabel.lowercased()) backup for \"\(current.deviceName)\" (\(current.modelName))?\n\nFolder: \(current.id)\nLast modified: \(current.dateString)\nSize on disk: \(sizeLabel)\n\nThis action cannot be undone.")
             }
         }
         .alert("Backup", isPresented: $backupVM.showAlert) {
@@ -148,7 +173,7 @@ struct BackupListView: View {
             )
         }
         .alert("Move Incomplete Backup to Trash?", isPresented: $showIncompleteBackupTrashConfirm) {
-            Button("Move to Trash & Run Full Backup", role: .destructive) {
+            Button("Move to Trash & Run Full Backup") {
                 if let issue = pendingIncompleteBackupIssue {
                     Task { await backupVM.deleteIncompleteBackupAndRunFull(for: issue) }
                 }
