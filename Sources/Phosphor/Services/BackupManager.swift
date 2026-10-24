@@ -552,6 +552,44 @@ final class BackupManager: ObservableObject {
         }
     }
 
+    /// Restores an archived snapshot (`<UDID>-phosphor-bkp-YYYYMMDD-HHmmss`) back to the primary
+    /// `<UDID>` backup slot. If an active `<UDID>` folder already exists on disk, it is first
+    /// preserved into a timestamped archive (`<UDID>-phosphor-bkp-<timestamp>`) before promoting
+    /// the selected archived snapshot.
+    nonisolated static func unarchiveBackup(_ backup: BackupInfo, in directory: String? = nil) throws -> String {
+        guard backup.isArchivedSnapshot, !backup.udid.isEmpty else {
+            throw NSError(domain: "Phosphor.Backup", code: 10, userInfo: [
+                NSLocalizedDescriptionKey: "Only archived snapshots with a valid device UDID can be unarchived."
+            ])
+        }
+        let fm = FileManager.default
+        let parentDir = directory ?? (backup.path as NSString).deletingLastPathComponent
+        let activePath = backupPath(for: backup.udid, in: parentDir)
+
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: backup.path, isDirectory: &isDir), isDir.boolValue else {
+            throw NSError(domain: "Phosphor.Backup", code: 11, userInfo: [
+                NSLocalizedDescriptionKey: "The archived backup folder no longer exists at \(backup.path)."
+            ])
+        }
+
+        if fm.fileExists(atPath: activePath, isDirectory: &isDir), isDir.boolValue {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyyMMdd-HHmmss"
+            var timestamp = formatter.string(from: Date())
+            var swapPath = (parentDir as NSString).appendingPathComponent("\(backup.udid)-phosphor-bkp-\(timestamp)")
+            if swapPath == backup.path || fm.fileExists(atPath: swapPath) {
+                timestamp += "-prev"
+                swapPath = (parentDir as NSString).appendingPathComponent("\(backup.udid)-phosphor-bkp-\(timestamp)")
+            }
+            try fm.moveItem(atPath: activePath, toPath: swapPath)
+        }
+
+        try fm.moveItem(atPath: backup.path, toPath: activePath)
+        commitMetadataGuard(for: backup.udid, in: parentDir)
+        return activePath
+    }
+
     static func incompleteBackupHasKnownMarkers(_ path: String) -> Bool {
         let knownMarkers = ["Info.plist", "Status.plist", "Manifest.plist", "Manifest.db", "Manifest.mbdb"]
         return knownMarkers.contains { marker in

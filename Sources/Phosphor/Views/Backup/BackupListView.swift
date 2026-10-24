@@ -9,6 +9,8 @@ struct BackupListView: View {
     var onBrowseBackup: () -> Void = {}
     @State private var showDeleteConfirm = false
     @State private var backupToDelete: BackupInfo?
+    @State private var showUnarchiveConfirm = false
+    @State private var backupToUnarchive: BackupInfo?
     @State private var showImportArchive = false
     @State private var archiveProgress: String?
     @State private var isArchiving = false
@@ -93,7 +95,9 @@ struct BackupListView: View {
                         BackupRow(
                             backup: backup,
                             activity: backup.isArchivedSnapshot ? nil : backupVM.activity(for: backup.udid),
-                            isDeviceConnected: deviceVM.devices.contains(where: { $0.id == backup.udid })
+                            isDeviceConnected: deviceVM.devices.contains(where: { $0.id == backup.udid }),
+                            hasActiveSlotForDevice: backupVM.backups.contains { !$0.isArchivedSnapshot && $0.udid == backup.udid },
+                            isDeviceBackupRunning: backupVM.isBackupActive(for: backup.udid)
                         ) {
                             if backupVM.openBackupBrowser(backup) {
                                 onBrowseBackup()
@@ -123,6 +127,10 @@ struct BackupListView: View {
                         } onDiagnose: {
                             diagnosisUDID = backup.udid
                             showDiagnosisSheet = true
+                        } onUnarchive: {
+                            let latest = backupVM.backups.first(where: { $0.id == backup.id }) ?? backup
+                            backupToUnarchive = latest
+                            showUnarchiveConfirm = true
                         }
                     }
                 }
@@ -151,6 +159,27 @@ struct BackupListView: View {
                 }()
                 let stateLabel = current.isArchivedSnapshot ? "Archived (\(current.healthState.rawValue))" : current.healthState.rawValue
                 Text("Permanently delete the \(stateLabel.lowercased()) backup for \"\(current.deviceName)\" (\(current.modelName))?\n\nFolder: \(current.id)\nLast modified: \(current.dateString)\nSize on disk: \(sizeLabel)\n\nThis action cannot be undone.")
+            }
+        }
+        .alert(unarchiveAlertTitle, isPresented: $showUnarchiveConfirm) {
+            Button(unarchivePrimaryButtonTitle) {
+                if let backup = backupToUnarchive {
+                    backupVM.unarchiveBackup(backup)
+                }
+                backupToUnarchive = nil
+            }
+            Button("Cancel", role: .cancel) {
+                backupToUnarchive = nil
+            }
+        } message: {
+            if let backup = backupToUnarchive {
+                let current = backupVM.backups.first(where: { $0.id == backup.id }) ?? backup
+                let hasActive = backupVM.backups.contains { !$0.isArchivedSnapshot && $0.udid == current.udid }
+                if hasActive {
+                    Text("Make this archived snapshot from \(current.dateString) the active backup for \"\(current.deviceName)\" (\(current.modelName))?\n\nThe current active backup folder (\(current.udid)) will be preserved as a timestamped archive first, and \(current.id) will become \(current.udid).")
+                } else {
+                    Text("Restore this archived snapshot for \"\(current.deviceName)\" (\(current.modelName)) as the active backup?\n\nFrom: \(current.id)\nTo: \(current.udid)\nBackup date: \(current.dateString)\n\nFuture incremental backups will build upon this snapshot.")
+                }
             }
         }
         .alert("Backup", isPresented: $backupVM.showAlert) {
@@ -333,6 +362,18 @@ struct BackupListView: View {
         deviceVM.selectedDevice.map { backupVM.isBackupActive(for: $0.id) } == true
     }
 
+    private var unarchiveAlertTitle: String {
+        guard let backup = backupToUnarchive else { return "Unarchive Backup?" }
+        let hasActive = backupVM.backups.contains { !$0.isArchivedSnapshot && $0.udid == backup.udid }
+        return hasActive ? "Unarchive & Swap Active Backup?" : "Unarchive Backup?"
+    }
+
+    private var unarchivePrimaryButtonTitle: String {
+        guard let backup = backupToUnarchive else { return "Unarchive" }
+        let hasActive = backupVM.backups.contains { !$0.isArchivedSnapshot && $0.udid == backup.udid }
+        return hasActive ? "Unarchive & Swap" : "Unarchive"
+    }
+
 
     @ViewBuilder
     private var backupStateNotice: some View {
@@ -350,7 +391,7 @@ struct BackupListView: View {
     }
 
     private func hasResumableBackup(for device: DeviceInfo) -> Bool {
-        if let existing = backupVM.backups.first(where: { $0.udid == device.id || $0.id == device.id }) {
+        if let existing = backupVM.backups.first(where: { !$0.isArchivedSnapshot && ($0.udid == device.id || $0.id == device.id) }) {
             return existing.healthState == .paused
         }
         if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: device.id) {
@@ -366,6 +407,17 @@ struct BackupListView: View {
                 "Saved files from your previous backup were preserved. Resume will continue transferring where it left off.",
                 "pause.circle.fill",
                 .orange
+            )
+        }
+
+        let hasActiveSlot = backupVM.backups.contains { !$0.isArchivedSnapshot && ($0.udid == device.id || $0.id == device.id) }
+        let hasArchivedComplete = backupVM.backups.contains { $0.isArchivedSnapshot && $0.udid == device.id && $0.healthState == .complete }
+        if !hasActiveSlot && hasArchivedComplete {
+            return (
+                "Archived snapshot available",
+                "No active backup slot exists for \(device.name), but a complete archived snapshot was found. Click Unarchive on the snapshot row to restore it as your active backup.",
+                "archivebox.fill",
+                .blue
             )
         }
 
@@ -642,11 +694,11 @@ struct BackupListView: View {
     }
 
     private func shouldOfferIncremental(for device: DeviceInfo) -> Bool {
-        if let existing = backupVM.backups.first(where: { $0.udid == device.id || $0.id == device.id }) {
+        if let existing = backupVM.backups.first(where: { !$0.isArchivedSnapshot && ($0.udid == device.id || $0.id == device.id) }) {
             return existing.healthState == .complete
         }
         return BackupManager.hasExistingBackup(for: device.id) && backupVM.backups.contains { backup in
-            backup.udid == device.id || backup.id == device.id
+            !backup.isArchivedSnapshot && (backup.udid == device.id || backup.id == device.id)
         }
     }
 
@@ -1059,12 +1111,15 @@ struct BackupRow: View {
     let backup: BackupInfo
     var activity: BackupViewModel.BackupActivity?
     var isDeviceConnected: Bool = true
+    var hasActiveSlotForDevice: Bool = true
+    var isDeviceBackupRunning: Bool = false
     let onBrowse: () -> Void
     let onDelete: () -> Void
     let onResume: () -> Void
     var onRepair: () -> Void = {}
     let onPause: () -> Void
     var onDiagnose: () -> Void = {}
+    var onUnarchive: () -> Void = {}
     @State private var isExporting = false
 
     private var isActive: Bool { activity?.isActive == true }
@@ -1295,9 +1350,28 @@ struct BackupRow: View {
                 } else {
                     switch backup.healthState {
                     case .complete:
-                        EmptyView()
+                        if backup.isArchivedSnapshot && !hasActiveSlotForDevice {
+                            Button(action: onUnarchive) {
+                                Label("Unarchive", systemImage: "arrow.uturn.backward.circle")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.brandAccent)
+                            .controlSize(.small)
+                            .disabled(isDeviceBackupRunning)
+                            .help("Restore this archived snapshot as the active backup for \(backup.deviceName)")
+                        }
                     case .paused:
-                        if !backup.isArchivedSnapshot {
+                        if backup.isArchivedSnapshot {
+                            if !hasActiveSlotForDevice {
+                                Button(action: onUnarchive) {
+                                    Label("Unarchive", systemImage: "arrow.uturn.backward.circle")
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(isDeviceBackupRunning)
+                                .help("Restore this archived snapshot as the active backup for \(backup.deviceName)")
+                            }
+                        } else {
                             Button("Resume", action: onResume)
                                 .buttonStyle(.borderedProminent)
                                 .tint(.orange)
@@ -1333,6 +1407,20 @@ struct BackupRow: View {
 
                 Menu {
                     Button("Browse Contents") { onBrowse() }
+
+                    if backup.isArchivedSnapshot && backup.healthState != .broken {
+                        Divider()
+
+                        Button {
+                            onUnarchive()
+                        } label: {
+                            Label(
+                                hasActiveSlotForDevice ? "Set as Active Backup (Unarchive & Swap)…" : "Set as Active Backup (Unarchive)…",
+                                systemImage: "arrow.uturn.backward.circle"
+                            )
+                        }
+                        .disabled(isDeviceBackupRunning)
+                    }
 
                     Divider()
 

@@ -92,5 +92,9 @@ def test_backup_health_state_metadata_guard_and_quarantine(root: Path) -> None:
     assert_contains(resumable, "static func latestBackupDiskActivityDate", "BackupManager must track disk modification timestamps during active backups")
     assert_contains(list_view, 'Button("Repair", action: onRepair)', "Broken backups must offer a Repair action")
     assert_contains(list_view, ".disabled(!isDeviceConnected)", "Resume and Repair actions must be disabled when the device is disconnected")
+    assert_contains(manager, "static func unarchiveBackup", "BackupManager must implement non-destructive unarchiveBackup")
+    assert_contains(list_view, '"Unarchive Backup?"', "BackupListView must show confirmation alert before unarchiving")
+    assert_contains(list_view, 'Label("Unarchive", systemImage: "arrow.uturn.backward.circle")', "BackupRow must offer Unarchive button for archived snapshots")
+
 
 
