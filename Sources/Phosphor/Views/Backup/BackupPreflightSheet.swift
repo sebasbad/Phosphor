@@ -385,6 +385,7 @@ struct BackupPreflightSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.brandAccent)
+                .disabled(isCheckingExistingBackup)
                 .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 24)
