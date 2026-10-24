@@ -292,11 +292,6 @@ struct AppRowView: View {
             .toggleStyle(.checkbox)
             .labelsHidden()
 
-            Image(systemName: app.isSystemApp ? "apple.logo" : "app.fill")
-                .font(.title3)
-                .foregroundStyle(isExcluded ? Color.secondary.opacity(0.6) : (app.isSystemApp ? Color.secondary : Color.brandAccent))
-                .frame(width: 28, height: 28)
-
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(app.displayName)
