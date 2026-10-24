@@ -475,16 +475,16 @@ struct DeviceOverviewView: View {
     // MARK: - Helpers
 
     private func hasCompleteBackup(for device: DeviceInfo) -> Bool {
-        if let existing = backupVM.backups.first(where: { $0.udid == device.id || $0.id == device.id }) {
+        if let existing = backupVM.backups.first(where: { !$0.isArchivedSnapshot && ($0.udid == device.id || $0.id == device.id) }) {
             return existing.healthState == .complete
         }
         return BackupManager.hasExistingBackup(for: device.id) && backupVM.backups.contains { backup in
-            backup.udid == device.id || backup.id == device.id
+            !backup.isArchivedSnapshot && (backup.udid == device.id || backup.id == device.id)
         }
     }
 
     private func hasResumableBackup(for device: DeviceInfo) -> Bool {
-        if let existing = backupVM.backups.first(where: { $0.udid == device.id || $0.id == device.id }) {
+        if let existing = backupVM.backups.first(where: { !$0.isArchivedSnapshot && ($0.udid == device.id || $0.id == device.id) }) {
             return existing.healthState == .paused
         }
         return false
