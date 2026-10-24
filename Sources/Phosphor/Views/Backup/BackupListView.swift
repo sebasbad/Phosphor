@@ -289,7 +289,7 @@ struct BackupListView: View {
     /// That row renders the activity inline, so the standalone activity card
     /// would be a second surface for the same device.
     private func hasBackupRow(for udid: String) -> Bool {
-        backupVM.backups.contains { $0.udid == udid }
+        backupVM.backups.contains { !$0.isArchivedSnapshot && $0.udid == udid }
     }
 
     private var backedUpDeviceCount: Int {
@@ -1181,19 +1181,33 @@ struct BackupRow: View {
                             .help("Preserved historical snapshot (\(backup.id))")
                     }
 
-                    switch backup.healthState {
-                    case .complete:
-                        StatusChip(text: "Full", color: .brandAccent)
-                            .help(backup.isFullBackup
-                                ? "Self-contained full snapshot created in a single session"
-                                : "Self-contained full snapshot updated across multiple incremental or resumed sessions")
-                        StatusChip(text: "Complete", color: .green, icon: "checkmark.circle.fill")
-                    case .paused:
-                        StatusChip(text: "Full", color: .brandAccent)
-                        StatusChip(text: "Paused", color: .orange, icon: "pause.circle.fill")
-                    case .broken:
-                        StatusChip(text: "Broken", color: .red, icon: "exclamationmark.triangle.fill")
-                            .help("Metadata exists, but zero payload files were found on disk")
+                    if isActive {
+                        let activeChipText: String = {
+                            if activity?.isFinalizing == true { return "Finalizing" }
+                            if activity?.isResume == true { return "Resuming" }
+                            return "Backing Up"
+                        }()
+                        StatusChip(
+                            text: activeChipText,
+                            color: isStalled ? .orange : .brandAccent,
+                            icon: "arrow.triangle.2.circlepath.circle.fill"
+                        )
+                        .help("Live backup in progress for this device")
+                    } else {
+                        switch backup.healthState {
+                        case .complete:
+                            StatusChip(text: "Full", color: .brandAccent)
+                                .help(backup.isFullBackup
+                                    ? "Self-contained full snapshot created in a single session"
+                                    : "Self-contained full snapshot updated across multiple incremental or resumed sessions")
+                            StatusChip(text: "Complete", color: .green, icon: "checkmark.circle.fill")
+                        case .paused:
+                            StatusChip(text: "Full", color: .brandAccent)
+                            StatusChip(text: "Paused", color: .orange, icon: "pause.circle.fill")
+                        case .broken:
+                            StatusChip(text: "Broken", color: .red, icon: "exclamationmark.triangle.fill")
+                                .help("Metadata exists, but zero payload files were found on disk")
+                        }
                     }
                 }
 
@@ -1287,7 +1301,7 @@ struct BackupRow: View {
                     }
                 }
 
-                if backup.healthState != .broken {
+                if !isActive && backup.healthState != .broken {
                     Button("Browse") { onBrowse() }
                         .buttonStyle(.bordered)
                         .controlSize(.small)

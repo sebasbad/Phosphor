@@ -228,7 +228,7 @@ public enum BackupProfileType: String, CaseIterable, Identifiable, Codable, Send
                 let excludedPattern = excludedBundleIds
                     .map { NSRegularExpression.escapedPattern(for: $0) }
                     .joined(separator: "|")
-                return ["^\(fileNegativeLookahead)(?!AppDomain(-\(excludedPattern)|Group(-\(excludedPattern))).*).*$"]
+                return ["^\(fileNegativeLookahead)(?!AppDomain(-(\(excludedPattern))|Group-.*(\(excludedPattern))).*).*$"]
             } else {
                 return ["^\(fileNegativeLookahead).*$"]
             }
@@ -262,7 +262,7 @@ public enum BackupProfileType: String, CaseIterable, Identifiable, Codable, Send
                 let excludedPattern = excludedBundleIds
                     .map { NSRegularExpression.escapedPattern(for: $0) }
                     .joined(separator: "|")
-                patterns.append("^\(fileNegativeLookahead)(?!AppDomain(-\(excludedPattern)|Group(-\(excludedPattern))).*).*$")
+                patterns.append("^\(fileNegativeLookahead)(?!AppDomain(-(\(excludedPattern))|Group-.*(\(excludedPattern))).*).*$")
             } else if customDomains.isEmpty && !fileNegativeLookahead.isEmpty {
                 patterns.append("^\(fileNegativeLookahead).*$")
             }

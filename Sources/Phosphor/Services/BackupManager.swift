@@ -456,13 +456,17 @@ final class BackupManager: ObservableObject {
         return size > 0
     }
 
-    /// True when `path` looks like a single iOS backup folder (UDID dir with Info.plist + Manifest.*).
+    /// True when `path` looks like a single iOS backup folder (UDID dir with Info.plist + Manifest.* or active Status.plist).
     nonisolated static func looksLikeBackupFolder(_ path: String) -> Bool {
         let info = (path as NSString).appendingPathComponent("Info.plist")
         let manifestPlist = (path as NSString).appendingPathComponent("Manifest.plist")
         let manifestDb = (path as NSString).appendingPathComponent("Manifest.db")
+        let statusPlist = (path as NSString).appendingPathComponent("Status.plist")
+        let snapshotDir = (path as NSString).appendingPathComponent("Snapshot")
+        var isSnapshotDir: ObjCBool = false
+        let hasSnapshotDir = FileManager.default.fileExists(atPath: snapshotDir, isDirectory: &isSnapshotDir) && isSnapshotDir.boolValue
         return isNonEmptyFile(info) &&
-               (isNonEmptyFile(manifestPlist) || isNonEmptyFile(manifestDb))
+               (isNonEmptyFile(manifestPlist) || isNonEmptyFile(manifestDb) || (isNonEmptyFile(statusPlist) && hasSnapshotDir))
     }
 
     nonisolated static func backupPath(for udid: String, in directory: String? = nil) -> String {

@@ -96,15 +96,9 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
                           (fm.fileExists(atPath: manifestPlist) && ((try? fm.attributesOfItem(atPath: manifestPlist)[.size] as? UInt64) ?? 0) > 0)
         let hasRootPayload = BackupManager.backupRootHasPayloadData(path)
         let hasAnyPayload = hasRootPayload || BackupManager.incompleteBackupHasPayloadData(path)
-        guard hasAnyPayload else { return .broken }
-        guard hasManifest else { return .paused }
-
         let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
         var isSnapshotDir: ObjCBool = false
-        if fm.fileExists(atPath: snapshotPath, isDirectory: &isSnapshotDir), isSnapshotDir.boolValue,
-           BackupManager.backupRootHasPayloadData(snapshotPath) {
-            return .paused
-        }
+        let hasSnapshotDir = fm.fileExists(atPath: snapshotPath, isDirectory: &isSnapshotDir) && isSnapshotDir.boolValue
 
         let resolvedSnapshotState: String? = {
             if let snapshotState { return snapshotState }
@@ -115,6 +109,18 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
             }
             return plist["SnapshotState"] as? String
         }()
+
+        // If Snapshot/ directory exists with SnapshotState == "uploading", it is an in-progress/paused snapshot, not broken
+        if hasSnapshotDir && resolvedSnapshotState?.lowercased() == "uploading" {
+            return .paused
+        }
+
+        guard hasAnyPayload else { return .broken }
+        guard hasManifest else { return .paused }
+
+        if hasSnapshotDir, BackupManager.backupRootHasPayloadData(snapshotPath) {
+            return .paused
+        }
 
         guard let resolvedSnapshotState else {
             return hasRootPayload ? .paused : .broken

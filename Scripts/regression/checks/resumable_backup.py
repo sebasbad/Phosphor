@@ -87,6 +87,9 @@ def test_backup_health_state_metadata_guard_and_quarantine(root: Path) -> None:
     assert_contains(list_view, 'StatusChip(text: "Complete"', "Complete backups must display Complete health badge")
     assert_contains(list_view, 'StatusChip(text: "Paused"', "Paused backups must display Paused health badge")
     assert_contains(list_view, 'StatusChip(text: "Broken"', "Broken backups must display Broken health badge")
+    assert_contains(list_view, 'return "Backing Up"', "Active backups must display Backing Up chip instead of static health badges")
+    assert_contains(list_view, "backupVM.backups.contains { !$0.isArchivedSnapshot && $0.udid == udid }", "hasBackupRow must ignore archived snapshots so active backups are not suppressed")
+    assert_contains(resumable, "static func latestBackupDiskActivityDate", "BackupManager must track disk modification timestamps during active backups")
     assert_contains(list_view, 'Button("Repair", action: onRepair)', "Broken backups must offer a Repair action")
     assert_contains(list_view, ".disabled(!isDeviceConnected)", "Resume and Repair actions must be disabled when the device is disconnected")
 

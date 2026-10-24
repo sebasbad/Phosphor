@@ -814,6 +814,7 @@ final class BackupViewModel: ObservableObject {
         startObservability(udid: udid, isResume: isResume)
         startLivenessMonitor(udid: udid)
         refreshLegacyProgressState()
+        loadBackups()
 
         let success: Bool
         if request.isResume {
@@ -945,16 +946,27 @@ final class BackupViewModel: ObservableObject {
     private func startLivenessMonitor(udid: String) {
         livenessTasks[udid]?.cancel()
         livenessTasks[udid] = Task { [weak self] in
+            var hasTriggeredMidRunRefresh = false
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 if Task.isCancelled { break }
                 guard let self else { return }
-                let domain = await Task.detached(priority: .utility) {
-                    BackupManager.sampleActiveDomain(for: udid)
+                let (domain, diskDate) = await Task.detached(priority: .utility) {
+                    (
+                        BackupManager.sampleActiveDomain(for: udid),
+                        BackupManager.latestBackupDiskActivityDate(for: udid)
+                    )
                 }.value
                 self.updateActivity(udid: udid) {
                     $0.processAlive = true
                     if let domain { $0.currentDomain = domain }
+                    if let diskDate, diskDate > $0.lastProgressUpdate {
+                        $0.lastProgressUpdate = diskDate
+                    }
+                }
+                if !hasTriggeredMidRunRefresh, diskDate != nil {
+                    hasTriggeredMidRunRefresh = true
+                    self.loadBackups()
                 }
                 self.refreshLegacyProgressState()
             }
