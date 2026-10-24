@@ -45,6 +45,12 @@ public struct AppBackupTarget: Identifiable, Hashable, Sendable {
         dynamicDiskBytesOptional != nil || staticDiskBytesOptional != nil
     }
 
+    /// True when static binary size was resolved from iOS, but dynamic data usage was omitted
+    /// because the app stores data inside shared App Group containers (e.g. WhatsApp).
+    public var isDynamicSizeUnreported: Bool {
+        staticDiskBytesOptional != nil && dynamicDiskBytesOptional == nil
+    }
+
     public var effectiveDynamicBytes: Int64 {
         dynamicDiskBytesOptional ?? 0
     }
@@ -55,14 +61,18 @@ public struct AppBackupTarget: Identifiable, Hashable, Sendable {
 
     public var formattedDynamicSize: String {
         guard let bytes = dynamicDiskBytesOptional else {
-            // If static size was resolved, dynamic usage is either 0 or restricted by sandbox
             if staticDiskBytesOptional != nil {
-                return "0 KB"
+                return "Data size unknown"
             }
             return "Calculating..."
         }
         guard bytes > 0 else { return "0 KB" }
         return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    public var formattedStaticSize: String {
+        guard let stat = staticDiskBytesOptional, stat > 0 else { return "0 KB" }
+        return ByteCountFormatter.string(fromByteCount: stat, countStyle: .file)
     }
 
     public var formattedTotalSize: String {
