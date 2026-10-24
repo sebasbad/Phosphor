@@ -21,6 +21,11 @@ def test_backup_profile_models_and_regex_generation(root: Path) -> None:
     assert_contains(profile_src, "case communicationAndIdentity", "BackupProfileType must have communicationAndIdentity case")
     assert_contains(profile_src, "case essentialPhotos", "BackupProfileType must have essentialPhotos case")
     assert_contains(profile_src, "func preservationRegex", "BackupProfileType must generate preservation domain regex")
+    assert_contains(
+        profile_src,
+        r"(?!AppDomain(-(\(excludedPattern))|Group-.*(\(excludedPattern)))",
+        "preservationRegex must parenthesize excludedPattern so multi-app exclusions prefix '-' to every bundle ID",
+    )
 
     assert_contains(config_src, "struct DeviceBackupConfiguration", "DeviceBackupConfiguration model must exist")
     assert_contains(config_src, "func save(for udid: String)", "DeviceBackupConfiguration must support saving per UDID")
