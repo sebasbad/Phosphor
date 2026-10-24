@@ -59,12 +59,17 @@ struct BackupPreflightSheet: View {
     }
 
     @State private var currentStep: PreflightStep = .options
-    @State private var archiveExistingOnFullBackup: Bool = true
     @State private var hasExistingBackup: Bool
     @State private var isCheckingExistingBackup = false
+    @State private var existingBackupConfiguration: DeviceBackupConfiguration?
 
     private var destinationPath: String {
         backupDirectory
+    }
+
+    private var hasProfileMismatchWithExistingBackup: Bool {
+        guard hasExistingBackup, let existing = existingBackupConfiguration else { return false }
+        return !configuration.isCompatibleForIncremental(with: existing)
     }
 
     var body: some View {
@@ -94,13 +99,26 @@ struct BackupPreflightSheet: View {
             let udid = device.id
             let directory = backupDirectory
             isCheckingExistingBackup = true
-            let exists = await Task.detached(priority: .userInitiated) {
-                BackupManager.hasExistingBackup(for: udid, in: directory)
+            let result = await Task.detached(priority: .userInitiated) {
+                let exists = BackupManager.hasExistingBackup(for: udid, in: directory)
+                let inferred = exists ? DeviceBackupConfiguration.inferFromExistingBackup(udid: udid, in: directory) : nil
+                return (exists: exists, inferred: inferred)
             }.value
             guard !Task.isCancelled else { return }
             isCheckingExistingBackup = false
-            hasExistingBackup = exists
-            if !exists && incremental {
+            hasExistingBackup = result.exists
+            existingBackupConfiguration = result.inferred
+            if let inferred = result.inferred {
+                configuration.profileType = inferred.profileType
+                configuration.excludedBundleIds = inferred.excludedBundleIds
+            }
+            if !result.exists && incremental {
+                incremental = false
+            }
+        }
+        .onChange(of: configuration) { _, newConfig in
+            guard hasExistingBackup, let existing = existingBackupConfiguration else { return }
+            if !newConfig.isCompatibleForIncremental(with: existing) && incremental {
                 incremental = false
             }
         }
@@ -261,36 +279,37 @@ struct BackupPreflightSheet: View {
                                 .pickerStyle(.segmented)
                                 .labelsHidden()
                                 .frame(width: 220)
+                                .disabled(hasProfileMismatchWithExistingBackup)
                             }
 
-                            Text(incremental
-                                 ? "Updates the existing backup with only changed files since the last snapshot."
-                                 : "Transfers a complete snapshot of selected domains from the device.")
+                            Text(hasProfileMismatchWithExistingBackup
+                                 ? "Profile or app exclusions differ from the existing backup on disk (\(existingBackupConfiguration?.profileType.title ?? "Previous Profile")). Full Backup is selected so the existing backup is archived cleanly without mixing profiles."
+                                 : (incremental
+                                    ? "Updates the existing backup with only changed files since the last snapshot."
+                                    : "Transfers a complete snapshot of selected domains from the device."))
                                 .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(hasProfileMismatchWithExistingBackup ? Color.brandAccent : Color.secondary)
 
-                            if !incremental {
-                                Divider()
-                                HStack(spacing: 10) {
-                                    Image(systemName: "clock.arrow.circlepath")
-                                        .font(.system(size: 15))
-                                        .foregroundStyle(Color.brandAccent)
+                            Divider()
 
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text("Preserve Existing Backup")
-                                            .font(.system(size: 12, weight: .semibold))
-                                        Text("Archive current backup before full backup to prevent overwriting.")
-                                            .font(.system(size: 11))
-                                            .foregroundStyle(.secondary)
-                                    }
+                            HStack(spacing: 10) {
+                                Image(systemName: "checkmark.shield.fill")
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(.green)
 
-                                    Spacer()
-
-                                    Toggle("", isOn: $archiveExistingOnFullBackup)
-                                        .labelsHidden()
-                                        .toggleStyle(.switch)
-                                        .controlSize(.small)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(incremental
+                                         ? "Point-in-Time Snapshot Protected (Time Machine)"
+                                         : "Existing Backup Automatically Preserved")
+                                        .font(.system(size: 12, weight: .semibold))
+                                    Text(incremental
+                                         ? "Creates an instant zero-extra-space APFS Copy-on-Write snapshot before updating, so photos or messages deleted on \(device.name) are never lost."
+                                         : "Archives your current backup before starting a new full backup so previous snapshots are never overwritten.")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(.secondary)
                                 }
+
+                                Spacer()
                             }
                         }
                         .padding(12)
@@ -336,15 +355,20 @@ struct BackupPreflightSheet: View {
                 Spacer()
 
                 Button {
-                    let shouldArchive = hasExistingBackup && !incremental && archiveExistingOnFullBackup
+                    let hasPriorBackup = hasExistingBackup
+                    let isIncrementalRun = incremental
                     let targetUDID = device.id
                     let targetDir = backupDirectory
                     onNavigateToBackups()
                     dismiss()
-                    if shouldArchive {
+                    if hasPriorBackup {
                         Task { @MainActor in
                             _ = await Task.detached(priority: .userInitiated) {
-                                BackupManager.archiveExistingBackup(for: targetUDID, in: targetDir)
+                                if isIncrementalRun {
+                                    return BackupManager.cloneBackupSnapshot(for: targetUDID, in: targetDir)
+                                } else {
+                                    return BackupManager.archiveExistingBackup(for: targetUDID, in: targetDir)
+                                }
                             }.value
                             onStartBackup()
                         }

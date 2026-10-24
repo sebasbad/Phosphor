@@ -421,6 +421,12 @@ final class BackupManager: ObservableObject {
             var itemIsDir: ObjCBool = false
             guard fm.fileExists(atPath: fullPath, isDirectory: &itemIsDir), itemIsDir.boolValue else { continue }
 
+            // Auto-heal any clobbered plists from a leftover .<UDID>-phosphor-guard-bkp if a previous session crashed
+            let candidateGuard = metadataGuardPath(for: item, in: dir)
+            if fm.fileExists(atPath: candidateGuard) {
+                _ = restoreMetadataGuardIfNeeded(for: item, in: dir)
+            }
+
             guard looksLikeBackupFolder(fullPath) else { continue }
 
             if let backup = BackupInfo.fromDirectory(fullPath, includeSize: false) {
@@ -486,7 +492,7 @@ final class BackupManager: ObservableObject {
     }
 
     /// Preserves an existing complete backup folder by timestamping it
-    /// (e.g. `<UDID>-YYYYMMDD-HHmmss`) so subsequent backups do not clobber historical snapshots.
+    /// (`<UDID>-phosphor-bkp-YYYYMMDD-HHmmss`) so subsequent backups do not clobber historical snapshots.
     @discardableResult
     nonisolated static func archiveExistingBackup(for udid: String, in directory: String? = nil) -> String? {
         let root = directory ?? activeBackupDir
@@ -497,13 +503,47 @@ final class BackupManager: ObservableObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let timestamp = formatter.string(from: Date())
-        let archivedName = "\(udid)-\(timestamp)"
+        let archivedName = "\(udid)-phosphor-bkp-\(timestamp)"
         let archivedPath = (root as NSString).appendingPathComponent(archivedName)
 
         do {
             try fm.moveItem(atPath: currentPath, toPath: archivedPath)
+            commitMetadataGuard(for: udid, in: root)
             return archivedPath
         } catch {
+            return nil
+        }
+    }
+
+    /// Creates a point-in-time historical snapshot (`<UDID>-phosphor-bkp-YYYYMMDD-HHmmss`)
+    /// before an Incremental Backup runs so files deleted on the iPhone (`DLMessageRemoveItems`)
+    /// remain recoverable in the archived snapshot.
+    /// Uses APFS Copy-on-Write (`clonefile(2)`) when supported on the destination volume
+    /// (0 extra disk space for unchanged files, completes in seconds).
+    @discardableResult
+    nonisolated static func cloneBackupSnapshot(for udid: String, in directory: String? = nil) -> String? {
+        let root = directory ?? activeBackupDir
+        let currentPath = backupPath(for: udid, in: root)
+        let fm = FileManager.default
+        guard hasExistingBackup(for: udid, in: root) else { return nil }
+
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let timestamp = formatter.string(from: Date())
+        let snapshotName = "\(udid)-phosphor-bkp-\(timestamp)"
+        let snapshotPath = (root as NSString).appendingPathComponent(snapshotName)
+
+        // Fast path: APFS Copy-on-Write whole-directory clone via clonefile(2)
+        if Darwin.clonefile(currentPath, snapshotPath, 0) == 0 {
+            return snapshotPath
+        }
+
+        // Fallback for non-APFS volumes: standard directory copy
+        do {
+            try fm.copyItem(atPath: currentPath, toPath: snapshotPath)
+            return snapshotPath
+        } catch {
+            try? fm.removeItem(atPath: snapshotPath)
             return nil
         }
     }
