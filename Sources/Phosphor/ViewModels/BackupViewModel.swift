@@ -1526,6 +1526,16 @@ final class BackupViewModel: ObservableObject {
         }
     }
 
+    func unarchiveBackup(_ backup: BackupInfo) {
+        do {
+            _ = try BackupManager.unarchiveBackup(backup)
+            loadBackups()
+        } catch {
+            alertMessage = "Failed to unarchive backup: \(error.localizedDescription)"
+            showAlert = true
+        }
+    }
+
     var totalSize: String {
         if backups.contains(where: { !$0.sizeResolved }) {
             return "calculating..."
