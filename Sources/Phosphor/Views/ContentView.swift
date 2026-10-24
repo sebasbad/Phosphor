@@ -12,7 +12,6 @@ struct ContentView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var tunnelRunning = true
     @State private var tunnelStarting = false
-    @State private var showPreflightSheet = false
     @State private var preflightDevice: DeviceInfo?
     @State private var preflightIncremental = false
     @State private var preflightPreferNetwork = false
@@ -46,28 +45,26 @@ struct ContentView: View {
             BackupUnlockSheet(backup: backup)
                 .environmentObject(backupVM)
         }
-        .sheet(isPresented: $showPreflightSheet) {
-            if let device = preflightDevice {
-                BackupPreflightSheet(
-                    device: device,
-                    incremental: $preflightIncremental,
-                    preferNetwork: preflightPreferNetwork,
-                    configuration: $preflightConfig,
-                    onNavigateToBackups: {
-                        selectedSection = .backups
-                    },
-                    onStartBackup: {
-                        Task {
-                            await backupVM.createBackup(
-                                udid: device.id,
-                                incremental: preflightIncremental,
-                                preferNetwork: preflightPreferNetwork,
-                                configuration: preflightConfig
-                            )
-                        }
+        .sheet(item: $preflightDevice) { device in
+            BackupPreflightSheet(
+                device: device,
+                incremental: $preflightIncremental,
+                preferNetwork: preflightPreferNetwork,
+                configuration: $preflightConfig,
+                onNavigateToBackups: {
+                    selectedSection = .backups
+                },
+                onStartBackup: {
+                    Task {
+                        await backupVM.createBackup(
+                            udid: device.id,
+                            incremental: preflightIncremental,
+                            preferNetwork: preflightPreferNetwork,
+                            configuration: preflightConfig
+                        )
                     }
-                )
-            }
+                }
+            )
         }
         .task {
             // Defer process probing until after first paint.
@@ -190,11 +187,12 @@ struct ContentView: View {
         switch selectedSection {
         case .devices:
             DeviceOverviewView(onShowPreflight: { device in
-                preflightDevice = device
-                preflightIncremental = BackupManager.hasExistingBackup(for: device.id)
+                preflightIncremental = backupVM.backups.contains {
+                    ($0.udid == device.id || $0.id == device.id) && $0.healthState == .complete
+                }
                 preflightPreferNetwork = device.connectionType == .wifi
                 preflightConfig = DeviceBackupConfiguration.load(for: device.id)
-                showPreflightSheet = true
+                preflightDevice = device
             })
         case .readiness:
             ReadinessCenterView()

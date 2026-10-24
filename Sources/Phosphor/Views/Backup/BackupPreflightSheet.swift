@@ -29,6 +29,7 @@ struct BackupPreflightSheet: View {
         self._configuration = configuration
         self.onNavigateToBackups = onNavigateToBackups
         self.onStartBackup = onStartBackup
+        self._hasExistingBackup = State(initialValue: incremental.wrappedValue)
     }
 
     init(
@@ -59,10 +60,8 @@ struct BackupPreflightSheet: View {
 
     @State private var currentStep: PreflightStep = .options
     @State private var archiveExistingOnFullBackup: Bool = true
-
-    private var hasExistingBackup: Bool {
-        BackupManager.hasExistingBackup(for: device.id, in: backupDirectory)
-    }
+    @State private var hasExistingBackup: Bool
+    @State private var isCheckingExistingBackup = false
 
     private var destinationPath: String {
         backupDirectory
@@ -91,6 +90,20 @@ struct BackupPreflightSheet: View {
             height: 640
         )
         .animation(.easeInOut(duration: 0.2), value: currentStep)
+        .task(id: backupDirectory) {
+            let udid = device.id
+            let directory = backupDirectory
+            isCheckingExistingBackup = true
+            let exists = await Task.detached(priority: .userInitiated) {
+                BackupManager.hasExistingBackup(for: udid, in: directory)
+            }.value
+            guard !Task.isCancelled else { return }
+            isCheckingExistingBackup = false
+            hasExistingBackup = exists
+            if !exists && incremental {
+                incremental = false
+            }
+        }
     }
 
     // MARK: - Options Step View
@@ -235,6 +248,11 @@ struct BackupPreflightSheet: View {
                                     .foregroundStyle(Color.brandAccent)
                                 Text("Backup Mode")
                                     .font(.system(size: 12, weight: .semibold))
+                                if isCheckingExistingBackup {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .scaleEffect(0.7)
+                                }
                                 Spacer()
                                 Picker("", selection: $incremental) {
                                     Text("Full Backup").tag(false)
@@ -277,6 +295,17 @@ struct BackupPreflightSheet: View {
                         }
                         .padding(12)
                         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+                    } else if isCheckingExistingBackup {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Checking destination for existing backups...")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .padding(12)
+                        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
                     }
 
                     // Unlock reminder to prevent MBErrorDomain/208
@@ -307,12 +336,21 @@ struct BackupPreflightSheet: View {
                 Spacer()
 
                 Button {
-                    if hasExistingBackup && !incremental && archiveExistingOnFullBackup {
-                        BackupManager.archiveExistingBackup(for: device.id, in: backupDirectory)
-                    }
+                    let shouldArchive = hasExistingBackup && !incremental && archiveExistingOnFullBackup
+                    let targetUDID = device.id
+                    let targetDir = backupDirectory
                     onNavigateToBackups()
                     dismiss()
-                    onStartBackup()
+                    if shouldArchive {
+                        Task { @MainActor in
+                            _ = await Task.detached(priority: .userInitiated) {
+                                BackupManager.archiveExistingBackup(for: targetUDID, in: targetDir)
+                            }.value
+                            onStartBackup()
+                        }
+                    } else {
+                        onStartBackup()
+                    }
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.right.circle.fill")
