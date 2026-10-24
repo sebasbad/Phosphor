@@ -24,7 +24,6 @@ struct BackupListView: View {
     @State private var pendingCancelActivityUDID: String?
     @State private var diagnosisUDID: String?
     @State private var showDiagnosisSheet = false
-    @State private var showPreflightSheet = false
     @State private var preflightDevice: DeviceInfo?
     @State private var preflightIncremental = false
     @State private var preflightPreferNetwork = false
@@ -165,11 +164,10 @@ struct BackupListView: View {
             Button("Configure & Run Full Wi-Fi Backup") {
                 if let udid = pendingFullWiFiBackupUDID,
                    let device = deviceVM.devices.first(where: { $0.id == udid }) ?? deviceVM.selectedDevice {
-                    preflightDevice = device
                     preflightIncremental = false
                     preflightPreferNetwork = true
                     preflightConfig = DeviceBackupConfiguration.load(for: device.id)
-                    showPreflightSheet = true
+                    preflightDevice = device
                 }
                 pendingFullWiFiBackupUDID = nil
                 pendingFullWiFiBackupPrefersNetwork = false
@@ -206,26 +204,24 @@ struct BackupListView: View {
                 dismiss: { showDiagnosisSheet = false; diagnosisUDID = nil }
             )
         }
-        .sheet(isPresented: $showPreflightSheet) {
-            if let device = preflightDevice {
-                BackupPreflightSheet(
-                    device: device,
-                    incremental: $preflightIncremental,
-                    preferNetwork: preflightPreferNetwork,
-                    configuration: $preflightConfig,
-                    onNavigateToBackups: {},
-                    onStartBackup: {
-                        Task {
-                            await backupVM.createBackup(
-                                udid: device.id,
-                                incremental: preflightIncremental,
-                                preferNetwork: preflightPreferNetwork,
-                                configuration: preflightConfig
-                            )
-                        }
+        .sheet(item: $preflightDevice) { device in
+            BackupPreflightSheet(
+                device: device,
+                incremental: $preflightIncremental,
+                preferNetwork: preflightPreferNetwork,
+                configuration: $preflightConfig,
+                onNavigateToBackups: {},
+                onStartBackup: {
+                    Task {
+                        await backupVM.createBackup(
+                            udid: device.id,
+                            incremental: preflightIncremental,
+                            preferNetwork: preflightPreferNetwork,
+                            configuration: preflightConfig
+                        )
                     }
-                )
-            }
+                }
+            )
         }
         .onAppear { backupVM.loadBackups() }
     }
@@ -676,11 +672,10 @@ struct BackupListView: View {
             showFullWiFiBackupConfirm = true
             return
         }
-        preflightDevice = device
         preflightIncremental = incremental
         preflightPreferNetwork = device.connectionType == .wifi
         preflightConfig = DeviceBackupConfiguration.load(for: device.id)
-        showPreflightSheet = true
+        preflightDevice = device
     }
 
     private func repairBrokenBackup(_ backup: BackupInfo) {
