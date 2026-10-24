@@ -62,6 +62,7 @@ struct BackupPreflightSheet: View {
     @State private var hasExistingBackup: Bool
     @State private var isCheckingExistingBackup = false
     @State private var existingBackupConfiguration: DeviceBackupConfiguration?
+    @State private var showHelpPopover = false
 
     private var destinationPath: String {
         backupDirectory
@@ -292,27 +293,30 @@ struct BackupPreflightSheet: View {
 
                             Divider()
 
-                            HStack(spacing: 10) {
+                            HStack(spacing: 8) {
                                 Image(systemName: "checkmark.shield.fill")
-                                    .font(.system(size: 15))
+                                    .font(.system(size: 13))
                                     .foregroundStyle(.green)
 
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(incremental
-                                         ? "Point-in-Time Snapshot Protected (Time Machine)"
-                                         : "Existing Backup Automatically Preserved")
-                                        .font(.system(size: 12, weight: .semibold))
-                                    Text(incremental
-                                         ? "Creates an instant zero-extra-space APFS Copy-on-Write snapshot before updating, so photos or messages deleted on \(device.name) are never lost."
-                                         : "Archives your current backup before starting a new full backup so previous snapshots are never overwritten.")
-                                        .font(.system(size: 11))
-                                        .foregroundStyle(.secondary)
-                                }
+                                Text(incremental
+                                     ? "Point-in-Time Snapshot Protected"
+                                     : "Existing Backup Automatically Preserved")
+                                    .font(.system(size: 11, weight: .medium))
 
                                 Spacer()
+
+                                Button {
+                                    showHelpPopover.toggle()
+                                } label: {
+                                    Image(systemName: "info.circle")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Learn about snapshot protection and data safety")
                             }
                         }
-                        .padding(12)
+                        .padding(10)
                         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
                     } else if isCheckingExistingBackup {
                         HStack(spacing: 8) {
@@ -323,7 +327,7 @@ struct BackupPreflightSheet: View {
                                 .foregroundStyle(.secondary)
                             Spacer()
                         }
-                        .padding(12)
+                        .padding(10)
                         .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
                     }
 
@@ -347,12 +351,25 @@ struct BackupPreflightSheet: View {
 
             // Footer actions
             HStack {
+                Button {
+                    showHelpPopover.toggle()
+                } label: {
+                    Image(systemName: "questionmark.circle")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Learn about backup profiles, app data, and snapshot safety")
+                .popover(isPresented: $showHelpPopover, arrowEdge: .bottom) {
+                    BackupSafetyHelpView(deviceName: device.name)
+                }
+
+                Spacer()
+
                 Button("Cancel") {
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
-
-                Spacer()
 
                 Button {
                     let hasPriorBackup = hasExistingBackup
@@ -391,6 +408,69 @@ struct BackupPreflightSheet: View {
             .padding(.horizontal, 24)
             .padding(.vertical, 16)
             .background(Color.groupedBackground.opacity(0.5))
+        }
+    }
+}
+
+/// Help guide popover detailing backup safety guarantees and storage mechanics.
+struct BackupSafetyHelpView: View {
+    let deviceName: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Image(systemName: "shield.lefthalf.filled")
+                    .font(.title3)
+                    .foregroundStyle(Color.brandAccent)
+                Text("Backup Safety & Architecture")
+                    .font(.headline)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 12) {
+                helpRow(
+                    icon: "lock.shield.fill",
+                    color: .green,
+                    title: "System Accounts & Passwords",
+                    detail: "Keychain credentials, Passwords, Contacts, Messages, and System Settings are always included and cannot be excluded."
+                )
+
+                helpRow(
+                    icon: "arrow.triangle.2.circlepath",
+                    color: .blue,
+                    title: "Point-in-Time Protection",
+                    detail: "Before incremental or full backups update files, a snapshot of prior backups is preserved so photos or messages deleted on \(deviceName) are never lost."
+                )
+
+                helpRow(
+                    icon: "arrow.down.app.fill",
+                    color: .purple,
+                    title: "App Payloads & App Store",
+                    detail: "App binaries are redownloaded from the App Store on restore. Excluding an app skips its local documents and cache to save disk space."
+                )
+            }
+        }
+        .padding(18)
+        .frame(width: 380)
+    }
+
+    private func helpRow(icon: String, color: Color, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 14))
+                .foregroundStyle(color)
+                .frame(width: 20, alignment: .center)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }
