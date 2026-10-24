@@ -53,7 +53,7 @@ def test_app_exclusion_sheet_and_profile_selector_views_exist(root: Path) -> Non
     assert_contains(sheet_src, "struct AppExclusionSheet: View", "AppExclusionSheet view must exist")
     assert_contains(sheet_src, "Profile Details & Custom Inclusions", "AppExclusionSheet must have proper title")
     assert_contains(sheet_src, "listInstalledAppsWithSizes", "AppExclusionSheet must query apps with sizes")
-    assert_contains(sheet_src, "largestFilesTabContent", "AppExclusionSheet must provide largest files explorer")
+    assert_contains(sheet_src, "fileRulesTabContent", "AppExclusionSheet must provide file and media rules")
 
     assert_contains(selector_src, "struct BackupProfileSelectorView: View", "BackupProfileSelectorView must exist")
     assert_contains(selector_src, "Backup Profile", "BackupProfileSelectorView must show profile title")
