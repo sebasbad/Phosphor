@@ -745,12 +745,17 @@ enum PyMobileDevice {
     // MARK: - Apps
 
     /// List installed apps with optional size calculation (Issue #4).
-    static func appsList(udid: String? = nil, calculateSizes: Bool = false) async -> [[String: Any]] {
+    static func appsList(
+        udid: String? = nil,
+        calculateSizes: Bool = false,
+        timeoutOverride: TimeInterval? = nil
+    ) async -> [[String: Any]] {
         var args = ["apps", "list"]
         if calculateSizes { args.append("--calculate-sizes") }
         if let udid { args += ["--udid", udid] }
 
-        let result = await runAsync(args, timeout: calculateSizes ? 120 : 60)
+        let timeout = timeoutOverride ?? (calculateSizes ? 120 : 60)
+        let result = await runAsync(args, timeout: timeout)
         guard result.succeeded else { return [] }
 
         // Try JSON

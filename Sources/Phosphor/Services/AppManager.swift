@@ -84,9 +84,19 @@ final class AppManager: ObservableObject {
         isLoading = false
     }
 
+    /// List installed apps instantly, returning AppBackupTarget entries without waiting for disk size scans.
+    func listInstalledAppsFast(udid: String) async -> [AppBackupTarget] {
+        let pyApps = await PyMobileDevice.appsList(udid: udid, calculateSizes: false, timeoutOverride: 30)
+        return parseAppBackupTargets(from: pyApps)
+    }
+
     /// List installed apps with exact DynamicDiskUsage and StaticDiskUsage (Issue #4).
-    func listInstalledAppsWithSizes(udid: String) async -> [AppBackupTarget] {
-        let pyApps = await PyMobileDevice.appsList(udid: udid, calculateSizes: true)
+    func listInstalledAppsWithSizes(udid: String, timeout: TimeInterval? = nil) async -> [AppBackupTarget] {
+        let pyApps = await PyMobileDevice.appsList(udid: udid, calculateSizes: true, timeoutOverride: timeout)
+        return parseAppBackupTargets(from: pyApps)
+    }
+
+    private func parseAppBackupTargets(from pyApps: [[String: Any]]) -> [AppBackupTarget] {
         var targets: [AppBackupTarget] = []
 
         for appDict in pyApps {
@@ -99,8 +109,8 @@ final class AppManager: ObservableObject {
             let version = appDict["CFBundleShortVersionString"] as? String
                 ?? appDict["CFBundleVersion"] as? String ?? ""
 
-            let dynamicBytes = (appDict["DynamicDiskUsage"] as? NSNumber)?.int64Value ?? 0
-            let staticBytes = (appDict["StaticDiskUsage"] as? NSNumber)?.int64Value ?? 0
+            let dynamicBytes = (appDict["DynamicDiskUsage"] as? NSNumber)?.int64Value
+            let staticBytes = (appDict["StaticDiskUsage"] as? NSNumber)?.int64Value
 
             let isApple = bundleId.hasPrefix("com.apple.")
             if isApple {
@@ -140,10 +150,9 @@ final class AppManager: ObservableObject {
             ))
         }
 
-        // Sort descending by total data/footprint first, then alphabetically
         return targets.sorted {
-            let total0 = $0.dynamicDiskBytes + $0.staticDiskBytes
-            let total1 = $1.dynamicDiskBytes + $1.staticDiskBytes
+            let total0 = $0.effectiveTotalBytes
+            let total1 = $1.effectiveTotalBytes
             if total0 != total1 {
                 return total0 > total1
             }
