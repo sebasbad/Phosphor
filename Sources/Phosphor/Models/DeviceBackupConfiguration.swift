@@ -90,19 +90,6 @@ public struct DeviceBackupConfiguration: Codable, Equatable, Sendable {
             "com.tencent.xin"
         ]
 
-        // Parse Info.plist Installed Applications to see which 3rd-party apps existed on the device at backup time
-        let infoPath = (backupPath as NSString).appendingPathComponent("Info.plist")
-        let installedThirdPartyApps: Set<String> = {
-            guard let dict = PlistParser.parse(infoPath) else { return [] }
-            if let installed = dict["Installed Applications"] as? [String] {
-                return Set(installed.filter { !$0.hasPrefix("com.apple.") })
-            }
-            if let appsDict = dict["Applications"] as? [String: Any] {
-                return Set(appsDict.keys.filter { !$0.hasPrefix("com.apple.") })
-            }
-            return []
-        }()
-
         if backedUpThirdPartyApps.isEmpty {
             if hasCameraRoll {
                 return DeviceBackupConfiguration(profileType: .essentialPhotos)
@@ -115,10 +102,11 @@ public struct DeviceBackupConfiguration: Codable, Equatable, Sendable {
             return DeviceBackupConfiguration(profileType: .communicationAndIdentity)
         }
 
-        let excludedApps = installedThirdPartyApps.subtracting(backedUpThirdPartyApps)
+        // Full backup profile: all installed applications are included by default.
+        // Never speculatively uncheck apps based on historical manifest differences.
         return DeviceBackupConfiguration(
             profileType: .full,
-            excludedBundleIds: excludedApps
+            excludedBundleIds: []
         )
     }
 
