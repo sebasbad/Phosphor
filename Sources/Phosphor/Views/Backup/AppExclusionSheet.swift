@@ -15,8 +15,17 @@ struct AppExclusionView: View {
     @State private var isLoading = true
     @State private var searchText = ""
     @State private var sortOption: SortOption = .sizeDescending
+    @State private var statusFilter: StatusFilter = .all
     @State private var showAppleApps: Bool = false
     @State private var excludedBundleIds: Set<String> = []
+
+    enum StatusFilter: String, CaseIterable, Identifiable {
+        case all = "All"
+        case included = "Included"
+        case excluded = "Excluded"
+
+        var id: String { rawValue }
+    }
 
     enum SortOption: String, CaseIterable, Identifiable {
         case sizeDescending = "Largest Total Size"
@@ -30,6 +39,14 @@ struct AppExclusionView: View {
         var result = apps
         if !showAppleApps {
             result = result.filter { !$0.isSystemApp }
+        }
+        switch statusFilter {
+        case .all:
+            break
+        case .included:
+            result = result.filter { !excludedBundleIds.contains($0.id) }
+        case .excluded:
+            result = result.filter { excludedBundleIds.contains($0.id) }
         }
         if !searchText.isEmpty {
             result = result.filter {
@@ -90,9 +107,19 @@ struct AppExclusionView: View {
                 VStack(spacing: 2) {
                     Text("Profile Details & Custom Inclusions")
                         .font(.headline.weight(.semibold))
-                    Text("System passwords, Keychain, and Messages are always included.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Text("System passwords and Messages always included.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !excludedBundleIds.isEmpty {
+                            Text("•")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("\(excludedBundleIds.count) excluded (\(formattedSavings) saved)")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(Color.orange)
+                        }
+                    }
                 }
 
                 Spacer()
@@ -121,12 +148,20 @@ struct AppExclusionView: View {
 
     private var appsTabContent: some View {
         VStack(spacing: 0) {
-            // Controls: Search, Sort & Presets
-            HStack(spacing: 12) {
+            // Controls: Filter, Search, Sort & Presets
+            HStack(spacing: 10) {
+                Picker("Show", selection: $statusFilter) {
+                    Text("All (\(apps.filter { showAppleApps || !$0.isSystemApp }.count))").tag(StatusFilter.all)
+                    Text("Included (\(apps.filter { (showAppleApps || !$0.isSystemApp) && !excludedBundleIds.contains($0.id) }.count))").tag(StatusFilter.included)
+                    Text("Excluded (\(apps.filter { (showAppleApps || !$0.isSystemApp) && excludedBundleIds.contains($0.id) }.count))").tag(StatusFilter.excluded)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 320)
+
                 HStack {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
-                    TextField("Filter apps...", text: $searchText)
+                    TextField("Filter...", text: $searchText)
                         .textFieldStyle(.plain)
                     if !searchText.isEmpty {
                         Button {
@@ -143,7 +178,7 @@ struct AppExclusionView: View {
                 .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
 
                 Toggle(isOn: $showAppleApps) {
-                    Text("Apple Apps")
+                    Text("Apple")
                         .font(.system(size: 11))
                 }
                 .toggleStyle(.checkbox)
@@ -155,7 +190,7 @@ struct AppExclusionView: View {
                     }
                 }
                 .pickerStyle(.menu)
-                .frame(width: 170)
+                .frame(width: 150)
 
                 Menu("Bulk Actions") {
                     Button("Exclude Apps > 5 GB") {
