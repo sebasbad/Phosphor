@@ -13,6 +13,12 @@ struct AppExclusionView: View {
     // App List State
     @State private var apps: [AppBackupTarget] = []
     @State private var isLoading = true
+    @State private var isCalculatingSizes = false
+    @State private var sizeCalculationFailed = false
+    @State private var sizeCalculationTimeout: TimeInterval = 180
+    @State private var elapsedSeconds: Int = 0
+    @State private var timerTask: Task<Void, Never>?
+    @State private var sizeTask: Task<Void, Never>?
     @State private var searchText = ""
     @State private var sortOption: SortOption = .sizeDescending
     @State private var statusFilter: StatusFilter = .all
@@ -57,16 +63,16 @@ struct AppExclusionView: View {
         switch sortOption {
         case .sizeDescending:
             return result.sorted {
-                let s0 = $0.dynamicDiskBytes + $0.staticDiskBytes
-                let s1 = $1.dynamicDiskBytes + $1.staticDiskBytes
+                let s0 = $0.effectiveTotalBytes
+                let s1 = $1.effectiveTotalBytes
                 if s0 != s1 { return s0 > s1 }
                 return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
             }
         case .dynamicDescending:
             return result.sorted {
-                if $0.dynamicDiskBytes != $1.dynamicDiskBytes {
-                    return $0.dynamicDiskBytes > $1.dynamicDiskBytes
-                }
+                let d0 = $0.effectiveDynamicBytes
+                let d1 = $1.effectiveDynamicBytes
+                if d0 != d1 { return d0 > d1 }
                 return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
             }
         case .nameAscending:
@@ -78,7 +84,7 @@ struct AppExclusionView: View {
 
     var totalExcludedBytes: Int64 {
         apps.filter { excludedBundleIds.contains($0.id) }
-            .reduce(0) { $0 + $1.dynamicDiskBytes }
+            .reduce(0) { $0 + $1.effectiveDynamicBytes }
     }
 
     var formattedSavings: String {
@@ -142,6 +148,10 @@ struct AppExclusionView: View {
         .task {
             loadInitialData()
         }
+        .onDisappear {
+            timerTask?.cancel()
+            sizeTask?.cancel()
+        }
     }
 
     // MARK: - Tab 1: By Application
@@ -193,7 +203,7 @@ struct AppExclusionView: View {
                     .controlSize(.small)
                 }
 
-                // Row 2: Search Bar, Apple Apps Toggle, Sort Dropdown
+                // Row 2: Search Bar, Apple Apps Toggle, Sort Dropdown & Size Status
                 HStack(spacing: 10) {
                     HStack {
                         Image(systemName: "magnifyingglass")
@@ -213,6 +223,31 @@ struct AppExclusionView: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
                     .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+
+                    if isCalculatingSizes {
+                        HStack(spacing: 5) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Sizes (\(elapsedSeconds)s / \(Int(sizeCalculationTimeout))s)")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                    } else if sizeCalculationFailed {
+                        Button {
+                            retrySizeCalculation()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.clockwise")
+                                Text("Retry Sizes (\(Int(sizeCalculationTimeout))s)")
+                            }
+                            .font(.system(size: 11))
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
 
                     Toggle(isOn: $showAppleApps) {
                         Text("Apple Apps")
@@ -278,19 +313,78 @@ struct AppExclusionView: View {
         excludedBundleIds = configuration.excludedBundleIds
 
         Task {
-            let targets = await appManager.listInstalledAppsWithSizes(udid: udid)
+            // Phase 1: Fast initial load without waiting for size calculation
+            let targets = await appManager.listInstalledAppsFast(udid: udid)
             await MainActor.run {
                 self.apps = targets
                 self.isLoading = false
             }
+
+            // Phase 2: Compute storage footprints asynchronously in background
+            startSizeCalculationTask()
         }
+    }
+
+    private func startSizeCalculationTask() {
+        timerTask?.cancel()
+        sizeTask?.cancel()
+
+        isCalculatingSizes = true
+        sizeCalculationFailed = false
+        elapsedSeconds = 0
+
+        // Live visible elapsed-time ticker
+        timerTask = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if Task.isCancelled { break }
+                await MainActor.run {
+                    self.elapsedSeconds += 1
+                }
+            }
+        }
+
+        // Asynchronous size calculation task with adaptive timeout
+        let timeout = sizeCalculationTimeout
+        sizeTask = Task {
+            let targetsWithSizes = await appManager.listInstalledAppsWithSizes(udid: udid, timeout: timeout)
+            timerTask?.cancel()
+
+            await MainActor.run {
+                self.isCalculatingSizes = false
+                let resolvedCount = targetsWithSizes.filter(\.isSizeResolved).count
+                if targetsWithSizes.isEmpty || resolvedCount == 0 {
+                    // Timed out or failed to resolve sizes
+                    self.sizeCalculationFailed = true
+                    // Adaptive backoff: increase timeout by 50% for next retry
+                    self.sizeCalculationTimeout = min(600, max(self.sizeCalculationTimeout * 1.5, self.sizeCalculationTimeout + 60))
+                } else {
+                    self.sizeCalculationFailed = false
+                    // Merge calculated sizes into existing apps preserving order and state
+                    let sizeMap = Dictionary(uniqueKeysWithValues: targetsWithSizes.map { ($0.id, $0) })
+                    self.apps = self.apps.map { current in
+                        if let sized = sizeMap[current.id], sized.isSizeResolved {
+                            var updated = current
+                            updated.dynamicDiskBytesOptional = sized.dynamicDiskBytesOptional
+                            updated.staticDiskBytesOptional = sized.staticDiskBytesOptional
+                            return updated
+                        }
+                        return current
+                    }
+                }
+            }
+        }
+    }
+
+    private func retrySizeCalculation() {
+        startSizeCalculationTask()
     }
 
     private func excludeAppsAbove(bytes: Int64) {
         for app in apps {
             if !showAppleApps && app.isSystemApp { continue }
-            let totalBytes = app.dynamicDiskBytes + app.staticDiskBytes
-            if totalBytes >= bytes || app.dynamicDiskBytes >= bytes {
+            let totalBytes = app.effectiveTotalBytes
+            if totalBytes >= bytes || app.effectiveDynamicBytes >= bytes {
                 excludedBundleIds.insert(app.id)
             }
         }
@@ -364,8 +458,8 @@ struct AppRowView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(app.formattedDynamicSize)
                     .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(isExcluded ? Color.secondary : (app.dynamicDiskBytes > 1_000_000_000 ? Color.orange : Color.primary))
-                Text(app.staticDiskBytes > 0 ? "Total: \(app.formattedTotalSize)" : "Data & Cache")
+                    .foregroundStyle(isExcluded ? Color.secondary : (app.effectiveDynamicBytes > 1_000_000_000 ? Color.orange : Color.primary))
+                Text(app.effectiveTotalBytes > 0 ? "Total: \(app.formattedTotalSize)" : "Data & Cache")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
             }

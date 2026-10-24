@@ -29,7 +29,7 @@ def test_backup_profile_models_and_regex_generation(root: Path) -> None:
     assert_contains(config_src, "func isCompatibleForIncremental", "DeviceBackupConfiguration must validate incremental compatibility")
 
     assert_contains(target_src, "struct AppBackupTarget", "AppBackupTarget struct must exist")
-    assert_contains(target_src, "let dynamicDiskBytes: Int64", "AppBackupTarget must track dynamic data bytes")
+    assert_contains(target_src, "dynamicDiskBytes", "AppBackupTarget must track dynamic data bytes")
 
 
 def test_backup_engine_supports_domain_filtering_and_patching(root: Path) -> None:
