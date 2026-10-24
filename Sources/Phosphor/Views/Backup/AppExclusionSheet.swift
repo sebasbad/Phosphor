@@ -90,7 +90,7 @@ struct AppExclusionView: View {
                 VStack(spacing: 2) {
                     Text("Profile Details & Custom Inclusions")
                         .font(.headline.weight(.semibold))
-                    Text("Select which applications and data containers to include in this backup")
+                    Text("System passwords, Keychain, and Messages are always included.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -106,52 +106,6 @@ struct AppExclusionView: View {
             }
             .padding(.horizontal, 20)
             .padding(.top, 16)
-            .padding(.bottom, 12)
-
-            // Reassurance & Architecture Banner
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 12) {
-                    Image(systemName: "checkmark.shield.fill")
-                        .font(.title3)
-                        .foregroundStyle(.green)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("System Data & Accounts are Always Protected")
-                            .font(.caption.bold())
-                            .foregroundStyle(.primary)
-                        Text("Contacts, Keychain passwords, Messages, and System Settings are never excluded.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if totalExcludedBytes > 0 {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("\(excludedBundleIds.count) apps excluded")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            Text("Saving \(formattedSavings)")
-                                .font(.caption.bold())
-                                .foregroundStyle(Color.brandAccent)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(Color.brandAccent.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-                    }
-                }
-
-                Divider()
-
-                HStack(spacing: 6) {
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                    Text("iOS Backup Note: App binaries download from App Store. Excluded apps or media skip local payloads and will not transfer to a restored device.")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(12)
-            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-            .padding(.horizontal, 20)
             .padding(.bottom, 12)
 
             Divider()
@@ -340,7 +294,7 @@ struct AppRowView: View {
 
             Image(systemName: app.isSystemApp ? "apple.logo" : "app.fill")
                 .font(.title3)
-                .foregroundStyle(isExcluded ? Color.secondary : (app.isSystemApp ? Color.secondary : Color.brandAccent))
+                .foregroundStyle(isExcluded ? Color.secondary.opacity(0.6) : (app.isSystemApp ? Color.secondary : Color.brandAccent))
                 .frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -355,38 +309,26 @@ struct AppRowView: View {
                             .padding(.vertical, 1)
                             .background(Color.secondary.opacity(0.15), in: Capsule())
                     }
+                    if isExcluded {
+                        Text("Excluded from backup")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Text(app.id)
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
             }
 
             Spacer()
 
-            // Status Badge: Excluded vs Included
-            Text(isExcluded ? "Excluded" : "Included")
-                .font(.system(size: 10, weight: .bold))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    isExcluded ? Color.red.opacity(0.12) : Color.green.opacity(0.12),
-                    in: RoundedRectangle(cornerRadius: 4)
-                )
-                .foregroundStyle(isExcluded ? Color.red : Color.green)
-
             VStack(alignment: .trailing, spacing: 2) {
                 Text(app.formattedDynamicSize)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundStyle(isExcluded ? Color.secondary : (app.dynamicDiskBytes > 1_000_000_000 ? Color.orange : Color.primary))
-                if app.staticDiskBytes > 0 {
-                    Text("Total: \(app.formattedTotalSize)")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Data & Cache")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
+                Text(app.staticDiskBytes > 0 ? "Total: \(app.formattedTotalSize)" : "Data & Cache")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.vertical, 2)
