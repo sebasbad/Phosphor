@@ -10,15 +10,6 @@ struct AppExclusionView: View {
 
     @StateObject private var appManager = AppManager()
 
-    enum ViewTab: String, CaseIterable, Identifiable {
-        case byApp = "Applications"
-        case fileRules = "File & Media Rules"
-
-        var id: String { rawValue }
-    }
-
-    @State private var selectedTab: ViewTab = .byApp
-
     // App List State
     @State private var apps: [AppBackupTarget] = []
     @State private var isLoading = true
@@ -26,12 +17,6 @@ struct AppExclusionView: View {
     @State private var sortOption: SortOption = .sizeDescending
     @State private var showAppleApps: Bool = false
     @State private var excludedBundleIds: Set<String> = []
-
-    // File Rules State
-    @State private var excludeMediaAbove50MB: Bool = false
-    @State private var excludeAppCaches: Bool = false
-    @State private var customPatternInput: String = ""
-    @State private var excludedFilePatterns: [String] = []
 
     enum SortOption: String, CaseIterable, Identifiable {
         case sizeDescending = "Largest Total Size"
@@ -105,7 +90,7 @@ struct AppExclusionView: View {
                 VStack(spacing: 2) {
                     Text("Profile Details & Custom Inclusions")
                         .font(.headline.weight(.semibold))
-                    Text("Review apps and media rules to customize what is backed up")
+                    Text("Select which applications and data containers to include in this backup")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -169,25 +154,9 @@ struct AppExclusionView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, 12)
 
-            // Segmented Picker for Modes
-            Picker("Mode", selection: $selectedTab) {
-                ForEach(ViewTab.allCases) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 20)
-            .padding(.bottom, 12)
-
             Divider()
 
-            // Active Tab Content
-            switch selectedTab {
-            case .byApp:
-                appsTabContent
-            case .fileRules:
-                fileRulesTabContent
-            }
+            appsTabContent
         }
         .task {
             loadInitialData()
@@ -307,102 +276,8 @@ struct AppExclusionView: View {
         }
     }
 
-    // MARK: - Tab 2: File Rules
-
-    private var fileRulesTabContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                // Rule 1: Media Files Filter
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle(isOn: $excludeMediaAbove50MB) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Skip Large Media Files & Videos")
-                                .font(.system(size: 13, weight: .semibold))
-                            Text("Discards offline movies, videos, and audio binaries (.mp4, .mkv, .mov, .flac) across app sandboxes.")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .toggleStyle(.checkbox)
-                }
-                .padding(14)
-                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 10))
-
-                // Rule 2: App Caches Filter
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle(isOn: $excludeAppCaches) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Skip App Caches & Temporary Files")
-                                .font(.system(size: 13, weight: .semibold))
-                            Text("Discards Library/Caches/* and tmp/* folders while preserving user databases, accounts, and settings.")
-                                .font(.system(size: 11))
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .toggleStyle(.checkbox)
-                }
-                .padding(14)
-                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 10))
-
-                // Rule 3: Custom Pattern Filter
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Custom File Patterns to Exclude")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text("Exclude files matching specific filenames or extensions (e.g. *.iso, *.bin, *offline*).")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-
-                    HStack(spacing: 8) {
-                        TextField("Pattern (e.g. *.iso, *cache*)", text: $customPatternInput)
-                            .textFieldStyle(.roundedBorder)
-
-                        Button("Add Pattern") {
-                            let trimmed = customPatternInput.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !trimmed.isEmpty && !excludedFilePatterns.contains(trimmed) {
-                                excludedFilePatterns.append(trimmed)
-                                customPatternInput = ""
-                            }
-                        }
-                        .disabled(customPatternInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-
-                    if !excludedFilePatterns.isEmpty {
-                        FlowLayout(spacing: 6) {
-                            ForEach(excludedFilePatterns, id: \.self) { pattern in
-                                HStack(spacing: 4) {
-                                    Text(pattern)
-                                        .font(.system(size: 11, design: .monospaced))
-                                    Button {
-                                        excludedFilePatterns.removeAll { $0 == pattern }
-                                    } label: {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .font(.system(size: 11))
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(Color.orange.opacity(0.12), in: Capsule())
-                                .foregroundStyle(.orange)
-                            }
-                        }
-                        .padding(.top, 4)
-                    }
-                }
-                .padding(14)
-                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 10))
-
-                Spacer()
-            }
-            .padding(20)
-        }
-    }
-
     private func loadInitialData() {
         excludedBundleIds = configuration.excludedBundleIds
-        excludeMediaAbove50MB = configuration.excludeMediaAbove50MB
-        excludeAppCaches = configuration.excludeAppCaches
-        excludedFilePatterns = configuration.excludedFilePatterns
 
         Task {
             let targets = await appManager.listInstalledAppsWithSizes(udid: udid)
@@ -425,9 +300,6 @@ struct AppExclusionView: View {
 
     private func saveAndDismiss() {
         configuration.excludedBundleIds = excludedBundleIds
-        configuration.excludeMediaAbove50MB = excludeMediaAbove50MB
-        configuration.excludeAppCaches = excludeAppCaches
-        configuration.excludedFilePatterns = excludedFilePatterns
         configuration.save(for: udid)
         onDismiss()
     }
