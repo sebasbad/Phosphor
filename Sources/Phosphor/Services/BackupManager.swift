@@ -466,7 +466,7 @@ final class BackupManager: ObservableObject {
 
     /// Check whether a device has complete backup metadata, no backup folder,
     /// or an interrupted partial folder that should be cleaned up before retry.
-    static func backupMetadataHealth(for udid: String, in directory: String? = nil) -> BackupMetadataHealth {
+    nonisolated static func backupMetadataHealth(for udid: String, in directory: String? = nil) -> BackupMetadataHealth {
         let deviceDirectory = backupPath(for: udid, in: directory)
         let fm = FileManager.default
         var isDir: ObjCBool = false
@@ -481,14 +481,14 @@ final class BackupManager: ObservableObject {
     /// Incremental backups require an existing valid backup metadata folder for
     /// the target UDID. If the folder is missing or partially-created, both
     /// backup backends fail with low-level MBErrorDomain/205 plist errors.
-    static func hasExistingBackup(for udid: String, in directory: String? = nil) -> Bool {
+    nonisolated static func hasExistingBackup(for udid: String, in directory: String? = nil) -> Bool {
         backupMetadataHealth(for: udid, in: directory) == .complete
     }
 
     /// Preserves an existing complete backup folder by timestamping it
     /// (e.g. `<UDID>-YYYYMMDD-HHmmss`) so subsequent backups do not clobber historical snapshots.
     @discardableResult
-    static func archiveExistingBackup(for udid: String, in directory: String? = nil) -> String? {
+    nonisolated static func archiveExistingBackup(for udid: String, in directory: String? = nil) -> String? {
         let root = directory ?? activeBackupDir
         let currentPath = backupPath(for: udid, in: root)
         let fm = FileManager.default
