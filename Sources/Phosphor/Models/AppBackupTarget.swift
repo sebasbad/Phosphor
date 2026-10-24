@@ -54,14 +54,22 @@ public struct AppBackupTarget: Identifiable, Hashable, Sendable {
     }
 
     public var formattedDynamicSize: String {
-        guard let bytes = dynamicDiskBytesOptional else { return "Calculating..." }
+        guard let bytes = dynamicDiskBytesOptional else {
+            // If static size was resolved, dynamic usage is either 0 or restricted by sandbox
+            if staticDiskBytesOptional != nil {
+                return "0 KB"
+            }
+            return "Calculating..."
+        }
         guard bytes > 0 else { return "0 KB" }
         return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     public var formattedTotalSize: String {
-        guard let dyn = dynamicDiskBytesOptional, let stat = staticDiskBytesOptional else { return "Calculating..." }
-        let total = dyn + stat
+        guard dynamicDiskBytesOptional != nil || staticDiskBytesOptional != nil else {
+            return "Calculating..."
+        }
+        let total = (dynamicDiskBytesOptional ?? 0) + (staticDiskBytesOptional ?? 0)
         guard total > 0 else { return "0 KB" }
         return ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
     }

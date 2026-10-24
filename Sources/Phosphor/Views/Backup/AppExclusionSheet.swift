@@ -113,6 +113,15 @@ struct AppExclusionView: View {
         return ByteCountFormatter.string(fromByteCount: totalExcludedBytes, countStyle: .file)
     }
 
+    var excludedPercentageString: String? {
+        guard hasAnySizesResolved, totalAppsBytes > 0, totalExcludedBytes > 0 else { return nil }
+        let percentage = (Double(totalExcludedBytes) / Double(totalAppsBytes)) * 100.0
+        if percentage < 0.1 {
+            return "<0.1%"
+        }
+        return String(format: "%.1f%%", percentage)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
@@ -143,7 +152,8 @@ struct AppExclusionView: View {
                             Text("•")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text("\(excludedBundleIds.count) excluded (\(formattedSavings) saved)")
+                            let percentSuffix = excludedPercentageString.map { " • \($0)" } ?? ""
+                            Text("\(excludedBundleIds.count) excluded (\(formattedSavings)\(percentSuffix))")
                                 .font(.caption.weight(.medium))
                                 .foregroundStyle(Color.orange)
                         }
@@ -348,9 +358,16 @@ struct AppExclusionView: View {
                         Text("Excluded:")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
-                        Text(excludedBundleIds.isEmpty ? "None (0 B)" : "\(excludedBundleIds.count) apps (\(formattedSavings))")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundStyle(excludedBundleIds.isEmpty ? Color.secondary : Color.orange)
+                        if excludedBundleIds.isEmpty {
+                            Text("None (0 B)")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Color.secondary)
+                        } else {
+                            let percentSuffix = excludedPercentageString.map { " • \($0)" } ?? ""
+                            Text("\(excludedBundleIds.count) apps (\(formattedSavings)\(percentSuffix))")
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Color.orange)
+                        }
                     }
 
                     Spacer()
