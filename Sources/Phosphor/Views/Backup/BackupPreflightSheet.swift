@@ -376,6 +376,7 @@ struct BackupPreflightSheet: View {
                     let isIncrementalRun = incremental
                     let targetUDID = device.id
                     let targetDir = backupDirectory
+                    configuration.save(for: targetUDID)
                     dismiss()
                     if hasPriorBackup {
                         Task { @MainActor in
