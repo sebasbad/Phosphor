@@ -495,14 +495,29 @@ final class BackupManager: ObservableObject {
         backupMetadataHealth(for: udid, in: directory) == .complete
     }
 
-    /// Preserves an existing complete backup folder by timestamping it
-    /// (`<UDID>-phosphor-bkp-YYYYMMDD-HHmmss`) so subsequent backups do not clobber historical snapshots.
+    /// Preserves an existing active backup folder by timestamping it
+    /// (`<UDID>-phosphor-bkp-YYYYMMDD-HHmmss`) so subsequent full backups do not clobber historical snapshots
+    /// or fail with a redundant "Incomplete Backup Found" error. If the existing folder has zero payload
+    /// files (`.broken`), it is moved to a `-phosphor-broken-bkp-` quarantine folder instead.
     @discardableResult
     nonisolated static func archiveExistingBackup(for udid: String, in directory: String? = nil) -> String? {
         let root = directory ?? activeBackupDir
         let currentPath = backupPath(for: udid, in: root)
         let fm = FileManager.default
-        guard hasExistingBackup(for: udid, in: root) else { return nil }
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: currentPath, isDirectory: &isDir), isDir.boolValue else { return nil }
+
+        let health = backupMetadataHealth(for: udid, in: root)
+        switch health {
+        case .missing:
+            return nil
+        case .incomplete(let path):
+            guard incompleteBackupHasPayloadData(path) else {
+                return quarantineBrokenBackup(at: path)
+            }
+        case .complete:
+            break
+        }
 
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
