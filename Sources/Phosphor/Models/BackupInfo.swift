@@ -84,6 +84,24 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
         return id != udid
     }
 
+    /// Concise status suffix for backup selector menus across Data tabs and Snapshot Comparison.
+    var pickerStatusSuffix: String {
+        switch (isArchivedSnapshot, healthState) {
+        case (true, .complete):
+            return " • Archived"
+        case (true, .paused):
+            return " • Archived (Paused)"
+        case (true, .broken):
+            return " • Archived (Broken)"
+        case (false, .paused):
+            return " • Paused"
+        case (false, .broken):
+            return " • Broken"
+        case (false, .complete):
+            return ""
+        }
+    }
+
     /// Deterministic 3-state health classification (Issue #8):
     /// - `.complete`: Manifest metadata exists, payload buckets (`00`..`ff`) exist at root, no unpromoted `Snapshot/`, and `SnapshotState == "finished"`.
     /// - `.paused`: Payload files exist in `00`..`ff` or `Snapshot/`, and backup is awaiting resumption (`Snapshot/` exists or `SnapshotState != "finished"`).

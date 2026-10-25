@@ -321,6 +321,17 @@ final class BackupViewModel: ObservableObject {
 
     @Published var backups: [BackupInfo] = []
     @Published var selectedBackup: BackupInfo?
+
+    /// Backups eligible for browsing in Data tabs (excludes `.broken` zero-payload directories).
+    var browsableBackups: [BackupInfo] {
+        backups.filter { $0.healthState != .broken }
+    }
+
+    /// Preferred default backup for Data tabs: selects the newest `.complete` backup first,
+    /// falling back to `.paused` only when no complete snapshot exists on disk.
+    var preferredBrowsableBackup: BackupInfo? {
+        browsableBackups.first(where: { $0.healthState == .complete }) ?? browsableBackups.first
+    }
     @Published var isCreating = false
     @Published var progressText = ""
     @Published var progressFraction: Double?
