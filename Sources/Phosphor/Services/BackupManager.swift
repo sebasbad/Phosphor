@@ -64,6 +64,10 @@ final class BackupManager: ObservableObject {
     /// permitting two writers to operate on the same physical device (#60).
     private static var operationRegistry = BackupOperationRegistry()
     private var activeProcess: Shell.ManagedProcess?
+
+    static func activeProcessRunning(for udid: String) -> Bool {
+        operationRegistry.isRunning(udid: udid)
+    }
     private var operationCoordinator = BackupDeviceCoordinator()
     private var cancelledOperationIDs: Set<UUID> = []
     private var cancellationDrainTasks: [UUID: Task<Void, Never>] = [:]
