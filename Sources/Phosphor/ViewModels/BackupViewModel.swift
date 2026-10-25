@@ -611,6 +611,9 @@ final class BackupViewModel: ObservableObject {
     }
 
     func resumeBackup(udid: String, preferNetwork: Bool = false, encrypted: Bool = false, device: DeviceInfo? = nil, configuration: DeviceBackupConfiguration? = nil) async {
+        let resolvedConfig = configuration
+            ?? latestBackupRequests[udid]?.configuration
+            ?? DeviceBackupConfiguration.load(for: udid)
         await createBackup(
             udid: udid,
             incremental: false,
@@ -618,7 +621,7 @@ final class BackupViewModel: ObservableObject {
             encrypted: encrypted,
             isResume: true,
             device: device,
-            configuration: configuration
+            configuration: resolvedConfig
         )
     }
 
@@ -1260,7 +1263,9 @@ final class BackupViewModel: ObservableObject {
         await resumeBackup(
             udid: udid,
             preferNetwork: request?.preferNetwork ?? false,
-            encrypted: request?.encrypted ?? false
+            encrypted: request?.encrypted ?? false,
+            device: request?.device,
+            configuration: request?.configuration
         )
     }
 
