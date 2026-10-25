@@ -46,10 +46,13 @@ def test_readiness_center_supports_resumable_backups(root: Path) -> None:
     assert_contains(service_src, "case resumeBackup", "ReadinessOperation must support resumeBackup")
     assert_contains(service_src, "Incomplete Backup (Resumable)", "ReadinessService must title resumable backups distinctively")
     assert_contains(service_src, "BackupManager.incompleteBackupHasPayloadData", "ReadinessService must verify payload presence for resumability")
+    assert_contains(service_src, "if BackupManager.isAuxiliaryBackupDirectoryName(childName) { continue }", "ReadinessService must ignore guard and quarantine directories")
+    assert_contains(service_src, "if BackupManager.activeProcessRunning(for: udid)", "ReadinessService must skip active in-flight backups")
 
     assert_contains(view_src, 'Label("Resume Backup", systemImage: "play.circle.fill")', "ReadinessCenterView must offer Resume Backup button")
     assert_contains(view_src, "case .resumeBackup", "ReadinessCenterView must handle resumeBackup recovery operation")
     assert_contains(view_src, "backupVM.resumeBackup", "ReadinessCenterView must call backupVM.resumeBackup")
+    assert_contains(view_src, "!backupVM.isBackupActive(for: udid)", "ReadinessCenterView must hide recovery items for actively running backups")
 
 
 def test_upstream_feedback_invariants(root: Path) -> None:

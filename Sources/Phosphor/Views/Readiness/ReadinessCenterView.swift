@@ -152,10 +152,28 @@ struct ReadinessCenterView: View {
     }
 
     private func readinessRows(_ items: [ReadinessItem]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ForEach(items) { item in
-                ReadinessRow(item: item) { operation in
-                    pendingRecovery = PendingReadinessRecovery(operation: operation)
+        let visibleItems = items.filter { item in
+            guard let operation = item.operation else { return true }
+            switch operation {
+            case .resumeBackup(let udid, _), .deleteIncompleteBackupAndRunFull(let udid, _):
+                return !backupVM.isBackupActive(for: udid)
+            }
+        }
+        return VStack(alignment: .leading, spacing: 10) {
+            if visibleItems.isEmpty {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .frame(width: 20)
+                    Text("No incomplete or blocked backups require recovery right now.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                ForEach(visibleItems) { item in
+                    ReadinessRow(item: item) { operation in
+                        pendingRecovery = PendingReadinessRecovery(operation: operation)
+                    }
                 }
             }
         }

@@ -229,6 +229,8 @@ enum ReadinessService {
         let fm = FileManager.default
         let childNames = (try? fm.contentsOfDirectory(atPath: directory)) ?? []
         for childName in childNames {
+            if BackupManager.isAuxiliaryBackupDirectoryName(childName) { continue }
+            if childName.contains("-phosphor-bkp-") { continue }
             let childPath = (directory as NSString).appendingPathComponent(childName)
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: childPath, isDirectory: &isDir), isDir.boolValue else { continue }
@@ -236,15 +238,26 @@ enum ReadinessService {
             candidates.insert(childName)
         }
 
-        return candidates.compactMap { udid in
+        return candidates.compactMap { (udid: String) -> ReadinessItem? in
+            // Do not report an active in-flight backup as a stale incomplete backup.
+            if BackupManager.activeProcessRunning(for: udid) {
+                return nil
+            }
             guard case .incomplete(let path) = BackupManager.backupMetadataHealth(for: udid, in: directory) else {
                 return nil
             }
             let hasPayload = BackupManager.incompleteBackupHasPayloadData(path)
-            let title = hasPayload ? "Incomplete Backup (Resumable)" : "Incomplete Backup Found"
+            let infoPlist = PlistParser.parseBackupInfo(path)
+            let deviceName = devices.first(where: { $0.id == udid })?.name
+                ?? infoPlist?.deviceName
+                ?? infoPlist?.displayName
+            let suffix = String(udid.suffix(8))
+            let deviceLabel = deviceName.map { "\($0) (ID …\(suffix))" } ?? "ID …\(suffix)"
+            let baseTitle = hasPayload ? "Incomplete Backup (Resumable)" : "Incomplete Backup Found"
+            let title = "\(baseTitle) · \(deviceLabel)"
             let detail = hasPayload
-                ? "A previous backup for this device was interrupted, but downloaded data was safely preserved. You can resume without starting from scratch."
-                : "A previous backup for this device did not finish, so iOS may reject another backup in this folder."
+                ? "A previous backup for \(deviceLabel) was interrupted, but downloaded data was safely preserved. You can resume without starting from scratch."
+                : "A previous backup for \(deviceLabel) did not finish, so iOS may reject another backup in this folder."
             let recoveryAction = hasPayload
                 ? "Resume the backup to continue from saved progress, or move the folder to Trash if you prefer a clean start."
                 : "Move the incomplete folder to Trash, then run a fresh full backup with the device unlocked and connected over USB when possible."

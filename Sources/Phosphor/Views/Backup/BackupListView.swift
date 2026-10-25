@@ -359,7 +359,8 @@ struct BackupListView: View {
     }
 
     private func hasResumableBackup(for device: DeviceInfo) -> Bool {
-        backupVM.backups.contains {
+        guard !backupVM.isBackupActive(for: device.id) else { return false }
+        return backupVM.backups.contains {
             !$0.isArchivedSnapshot && ($0.udid == device.id || $0.id == device.id) && $0.healthState == .paused
         }
     }
@@ -431,13 +432,14 @@ struct BackupListView: View {
                 .disabled(deviceVM.selectedDevice == nil)
             }
         } else {
+            let isSelectedDeviceBusy = deviceVM.selectedDevice.map { backupVM.isBackupActive(for: $0.id) } ?? true
             Button {
                 guard let device = deviceVM.selectedDevice else { return }
                 startBackup(for: device, incremental: false)
             } label: {
                 Label("Full USB Backup (Fastest)", systemImage: "externaldrive.badge.plus")
             }
-            .disabled(deviceVM.selectedDevice == nil)
+            .disabled(isSelectedDeviceBusy)
 
             Button {
                 guard let device = deviceVM.selectedDevice else { return }
@@ -445,7 +447,7 @@ struct BackupListView: View {
             } label: {
                 Label("Incremental Backup", systemImage: "arrow.triangle.2.circlepath")
             }
-            .disabled(deviceVM.selectedDevice.map { shouldOfferIncremental(for: $0) } != true)
+            .disabled(isSelectedDeviceBusy || deviceVM.selectedDevice.map { shouldOfferIncremental(for: $0) } != true)
         }
     }
 
