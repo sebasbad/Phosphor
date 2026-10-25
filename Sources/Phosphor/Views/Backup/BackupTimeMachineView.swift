@@ -242,7 +242,7 @@ struct BackupTimeMachineView: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .tint(.white)
-                        .disabled(backupVM.isCreating || backupVM.backups.filter { $0.udid == backup.udid }.count < 2)
+                        .disabled(backup.healthState != .complete || backupVM.isCreating || backupVM.backups.filter { $0.udid == backup.udid && $0.healthState == .complete }.count < 2)
                     }
                     .padding(.top, 4)
                 }

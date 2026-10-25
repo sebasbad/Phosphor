@@ -114,5 +114,56 @@ def test_retry_preserves_resume_and_notifies_passcode(root: Path) -> None:
     assert_contains(tm_view, ".disabled(backup.healthState != .complete)", "BackupTimeMachineView must disable Restore This Backup for incomplete snapshots")
 
 
+def test_secondary_surfaces_and_data_tabs_sync_with_resumable_and_archived_backups(root: Path) -> None:
+    app = read(root, "Sources/Phosphor/App/PhosphorApp.swift")
+    scheduler = read(root, "Sources/Phosphor/Services/BackupScheduler.swift")
+    clone = read(root, "Sources/Phosphor/Services/DeviceCloneService.swift")
+    comparison = read(root, "Sources/Phosphor/Views/Backup/BackupComparisonView.swift")
+    tm = read(root, "Sources/Phosphor/Views/Backup/BackupTimeMachineView.swift")
+    manifest = read(root, "Sources/Phosphor/Utilities/BackupManifest.swift")
+    info = read(root, "Sources/Phosphor/Models/BackupInfo.swift")
+    vm = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+    messages = read(root, "Sources/Phosphor/Views/Messages/MessageListView.swift")
+    whatsapp = read(root, "Sources/Phosphor/Views/WhatsApp/WhatsAppView.swift")
+    photos = read(root, "Sources/Phosphor/Views/Photos/PhotoBrowserView.swift")
+    apps = read(root, "Sources/Phosphor/Views/Apps/AppManagerView.swift")
+    search = read(root, "Sources/Phosphor/Views/Search/UnifiedSearchView.swift")
+    browser = read(root, "Sources/Phosphor/Views/Backup/BackupBrowserView.swift")
+
+    assert_contains(app, "private func hasResumableBackup(for device: DeviceInfo) -> Bool", "Menu bar must detect resumable paused backups")
+    assert_contains(app, "await backupVM.resumeBackup(", "Menu bar Cmd+B must resume a paused backup instead of triggering Incomplete Backup Found")
+    assert_contains(scheduler, "if isResumable {", "BackupScheduler must resume paused backups on disk")
+    assert_contains(scheduler, "DeviceBackupConfiguration.load(for: udid)", "BackupScheduler must respect saved backup profile and app exclusions")
+    assert_contains(clone, "isResume: shouldResume", "DeviceCloneService must resume paused source backups")
+    assert_contains(clone, "$0.udid == sourceUDID && $0.healthState == .complete", "DeviceCloneService must only restore from a complete source backup")
+    assert_contains(comparison, ".filter { $0.healthState == .complete }", "BackupComparisonView must only compare complete snapshots")
+    assert_contains(tm, "$0.udid == backup.udid && $0.healthState == .complete", "BackupTimeMachineView must require 2 complete snapshots to enable Compare Backups")
+    assert_contains(manifest, 'let snapshotPath = "\\(backupRoot)/Snapshot/\\(prefix)/\\(id)"', "FileEntry.diskPath must fall back to Snapshot/<prefix>/<id> for paused backups")
+    assert_contains(manifest, 'appendingPathComponent("Snapshot/Manifest.db")', "BackupManifest.init must fall back to Snapshot/Manifest.db for paused backups")
+    assert_contains(info, "var pickerStatusSuffix: String", "BackupInfo must expose pickerStatusSuffix for Archived and Paused states")
+    assert_contains(vm, "var browsableBackups: [BackupInfo]", "BackupViewModel must filter out .broken backups for browsing")
+    assert_contains(vm, "var preferredBrowsableBackup: BackupInfo?", "BackupViewModel must prefer .complete backups over .paused for default selection")
+
+    for view_src, name in [
+        (messages, "MessageListView"),
+        (whatsapp, "WhatsAppView"),
+        (apps, "AppManagerView"),
+        (search, "UnifiedSearchView"),
+        (browser, "BackupBrowserView"),
+    ]:
+        assert_contains(view_src, "browsableBackups", f"{name} must list browsableBackups")
+        assert_contains(view_src, "pickerStatusSuffix", f"{name} must show pickerStatusSuffix in backup selector")
+
+    for view_src, name in [
+        (messages, "MessageListView"),
+        (whatsapp, "WhatsAppView"),
+        (photos, "PhotoBrowserView"),
+        (apps, "AppManagerView"),
+        (search, "UnifiedSearchView"),
+    ]:
+        assert_contains(view_src, "preferredBrowsableBackup", f"{name} must auto-select preferredBrowsableBackup")
+
+
+
 
 

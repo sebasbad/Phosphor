@@ -159,7 +159,7 @@ struct PhosphorApp: App {
             }
 
             CommandMenu("Backup") {
-                Button("Backup Now") {
+                Button(deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true ? "Resume Backup" : "Backup Now") {
                     startBackupNow()
                 }
                 .keyboardShortcut("b", modifiers: .command)
@@ -198,8 +198,30 @@ struct PhosphorApp: App {
         )
     }
 
+    private func hasResumableBackup(for device: DeviceInfo) -> Bool {
+        guard !backupVM.isBackupActive(for: device.id) else { return false }
+        if backupVM.backups.contains(where: { $0.udid == device.id && !$0.isArchivedSnapshot && $0.healthState == .paused }) {
+            return true
+        }
+        if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: device.id) {
+            return BackupManager.incompleteBackupHasPayloadData(path)
+        }
+        return false
+    }
+
     private func startBackupNow() {
         guard let device = deviceVM.selectedDevice, !backupVM.isCreating else { return }
+        if hasResumableBackup(for: device) {
+            selectedSection = .backups
+            Task {
+                await backupVM.resumeBackup(
+                    udid: device.id,
+                    preferNetwork: device.connectionType == .wifi,
+                    device: device
+                )
+            }
+            return
+        }
         if device.connectionType == .wifi && !BackupManager.hasExistingBackup(for: device.id) {
             guard confirmFirstFullWiFiBackup(for: device) else { return }
         }
@@ -208,7 +230,9 @@ struct PhosphorApp: App {
             await backupVM.createBackup(
                 udid: device.id,
                 incremental: false,
-                preferNetwork: device.connectionType == .wifi
+                preferNetwork: device.connectionType == .wifi,
+                device: device,
+                configuration: DeviceBackupConfiguration.load(for: device.id)
             )
         }
     }

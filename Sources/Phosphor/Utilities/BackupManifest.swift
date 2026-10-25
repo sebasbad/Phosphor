@@ -72,7 +72,15 @@ final class BackupManifest {
         /// Path to the actual file in the backup directory
         func diskPath(backupRoot: String) -> String {
             let prefix = String(id.prefix(2))
-            return "\(backupRoot)/\(prefix)/\(id)"
+            let rootPath = "\(backupRoot)/\(prefix)/\(id)"
+            if FileManager.default.fileExists(atPath: rootPath) {
+                return rootPath
+            }
+            let snapshotPath = "\(backupRoot)/Snapshot/\(prefix)/\(id)"
+            if FileManager.default.fileExists(atPath: snapshotPath) {
+                return snapshotPath
+            }
+            return rootPath
         }
     }
 
@@ -106,14 +114,22 @@ final class BackupManifest {
 
     init(backupPath: String) throws {
         self.backupPath = backupPath
-        let manifestPath = (backupPath as NSString).appendingPathComponent("Manifest.db")
+        let rootManifestPath = (backupPath as NSString).appendingPathComponent("Manifest.db")
+        let snapshotManifestPath = (backupPath as NSString).appendingPathComponent("Snapshot/Manifest.db")
 
         // Preflight: Manifest.db must exist, have the SQLite header, and the backup
         // must not be flagged as encrypted. Detecting this up front turns the opaque
         // 'SQLite prepare failed: unable to open database file' into a useful message.
+        // For paused/resumable backups, fall back to Snapshot/Manifest.db if root Manifest.db is absent or empty.
         let fm = FileManager.default
-        guard fm.fileExists(atPath: manifestPath) else {
-            throw ManifestError.manifestMissing(path: manifestPath)
+        let rootSize = (try? fm.attributesOfItem(atPath: rootManifestPath)[.size] as? UInt64) ?? 0
+        let manifestPath: String
+        if fm.fileExists(atPath: rootManifestPath) && rootSize > 0 {
+            manifestPath = rootManifestPath
+        } else if fm.fileExists(atPath: snapshotManifestPath) {
+            manifestPath = snapshotManifestPath
+        } else {
+            throw ManifestError.manifestMissing(path: rootManifestPath)
         }
 
         let declaredEncrypted = PlistParser.parseManifest(backupPath)?.isEncrypted ?? false
