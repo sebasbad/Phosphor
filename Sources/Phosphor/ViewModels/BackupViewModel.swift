@@ -304,7 +304,7 @@ final class BackupViewModel: ObservableObject {
                 return 0.99
             }
             guard let progressFraction else {
-                return resumeBaselineFraction > 0 ? resumeBaselineFraction : 0.05
+                return resumeBaselineFraction > 0 ? resumeBaselineFraction : 0.0
             }
             if isResume && resumeBaselineFraction > 0 {
                 // Compute progress over total: baseline + remaining * sessionFraction
@@ -314,14 +314,14 @@ final class BackupViewModel: ObservableObject {
                 // Cap in-progress running state at 0.99 so 100% is only shown when state becomes .completed
                 return state == .completed ? 1.0 : min(bounded, 0.99)
             }
-            let bounded = min(max(progressFraction, 0.05), 1.0)
+            let bounded = min(max(progressFraction, 0.0), 1.0)
             return state == .completed ? 1.0 : min(bounded, 0.99)
         }
 
         /// True when a resumable backup is active but the true baseline fraction
         /// is still calculating in the background.
         var isCalculatingResumeBaseline: Bool {
-            isResume && resumeBaselineFraction <= 0.05 && progressFraction == nil
+            isResume && resumeBaselineFraction <= 0.0 && progressFraction == nil
         }
     }
 
@@ -822,21 +822,26 @@ final class BackupViewModel: ObservableObject {
                     BackupManager.incompleteBackupStats(for: udid)
                 }.value
                 guard !Task.isCancelled, let self else { return }
-                var baselineFraction: Double = 0.05
+                var baselineFraction: Double = 0.0
                 var resumeFileCount: Int?
                 if let stats {
                     resumeFileCount = stats.fileCount
                     if let device = requestDevice, let calculatedFraction = stats.completionFraction(for: device) {
                         // Accurately reflect preserved progress up to 99%
-                        baselineFraction = min(max(calculatedFraction, 0.05), 0.99)
+                        baselineFraction = min(max(calculatedFraction, 0.01), 0.99)
+                    } else if let priorBackupSize = self.backups.first(where: { $0.udid == udid && $0.size > 0 })?.size, priorBackupSize > 0 {
+                        // Compare against historical completed backup size for this device
+                        let fraction = Double(stats.totalBytes) / Double(priorBackupSize)
+                        baselineFraction = min(max(fraction, 0.01), 0.99)
                     } else if stats.totalBytes > 1_000_000_000 {
-                        // Fallback when device capacity is unknown: scale generously up to 95%
-                        baselineFraction = min(Double(stats.totalBytes) / 70_000_000_000.0, 0.95)
-                        baselineFraction = max(baselineFraction, 0.10)
+                        // Fallback when device capacity is unknown: estimate against typical device backup payload (~200 GB)
+                        baselineFraction = min(Double(stats.totalBytes) / 200_000_000_000.0, 0.95)
+                        baselineFraction = max(baselineFraction, 0.05)
                     } else if stats.fileCount > 5000 {
-                        baselineFraction = 0.10
+                        baselineFraction = min(Double(stats.fileCount) / 350_000.0, 0.90)
+                        baselineFraction = max(baselineFraction, 0.05)
                     } else {
-                        baselineFraction = 0.05
+                        baselineFraction = 0.0
                     }
                 }
                 self.updateActivity(udid: udid) {
@@ -1033,9 +1038,12 @@ final class BackupViewModel: ObservableObject {
                         $0.isAwaitingPasscode = false
                         $0.hasReceivedTransferProgress = true
                     }
-                    // If the backup process has been running for 3+ seconds with zero transfer progress
-                    // and we are past local sanitization, iOS is waiting at the lock screen / passcode prompt.
+                    // If the backup process has been running for 3+ seconds with zero transfer progress,
+                    // not yet confirmed past passcode, and we are past local sanitization, check if
+                    // user passcode is needed. If device already accepted PIN and started payload/Status.plist writes,
+                    // do not re-assert isAwaitingPasscode.
                     if !$0.hasReceivedTransferProgress,
+                       !$0.isResume,
                        $0.transition == nil,
                        $0.explicitPhase != .sanitization,
                        Date().timeIntervalSince($0.startTime) >= 3.0 {

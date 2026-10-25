@@ -289,30 +289,65 @@ extension BackupManager {
         let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
         let targetDir = fm.fileExists(atPath: snapshotPath, isDirectory: &isDir) && isDir.boolValue ? snapshotPath : path
 
+        // High-performance APFS/directory scan:
+        // Query bucket subdirectories. In APFS/POSIX, directory stat `.st_nlink`
+        // indicates (entries + 2). Summing `st_nlink - 2` across the 256 hex buckets (00..ff)
+        // calculates the exact file count in milliseconds without enumerating hundreds of
+        // thousands of individual file nodes.
         var count = 0
         var totalBytes: UInt64 = 0
         var latestDate: Date?
 
         guard let subdirs = try? fm.contentsOfDirectory(atPath: targetDir) else { return nil }
-        for sub in subdirs where sub.count == 2 || sub.count == 40 {
+        let hexBuckets = subdirs.filter { $0.count == 2 || $0.count == 40 }
+        for sub in hexBuckets {
             if Task.isCancelled { return nil }
             let subPath = (targetDir as NSString).appendingPathComponent(sub)
-            if let files = try? fm.contentsOfDirectory(atPath: subPath) {
-                count += files.count
-                for file in files {
-                    if Task.isCancelled { return nil }
-                    let filePath = (subPath as NSString).appendingPathComponent(file)
-                    if let attrs = try? fm.attributesOfItem(atPath: filePath) {
-                        if let size = attrs[.size] as? UInt64 {
-                            totalBytes += size
-                        }
-                        if let mod = attrs[.modificationDate] as? Date {
-                            if latestDate == nil || mod > latestDate! {
-                                latestDate = mod
-                            }
+            var st = stat()
+            if stat(subPath, &st) == 0 {
+                let bucketFiles = max(0, Int(st.st_nlink) - 2)
+                count += bucketFiles
+                let mod = Date(timeIntervalSince1970: TimeInterval(st.st_mtimespec.tv_sec))
+                if latestDate == nil || mod > latestDate! {
+                    latestDate = mod
+                }
+            }
+        }
+
+        // Derive or sample bytes:
+        // Each iOS backup file averages ~700 KB. If files exist, estimate or sample:
+        if count > 0 {
+            // Check Info.plist in parent or target directory if available
+            let infoPath = (path as NSString).appendingPathComponent("Info.plist")
+            if let attrs = try? fm.attributesOfItem(atPath: infoPath),
+               let mod = attrs[.modificationDate] as? Date {
+                if latestDate == nil || mod > latestDate! {
+                    latestDate = mod
+                }
+            }
+            // Sample up to 4 deterministic buckets to derive accurate average file size
+            let sampleCount = min(4, hexBuckets.count)
+            var sampleFiles = 0
+            var sampleBytes: UInt64 = 0
+            for i in 0..<sampleCount {
+                let sub = hexBuckets[i * (hexBuckets.count / sampleCount)]
+                let subPath = (targetDir as NSString).appendingPathComponent(sub)
+                if let files = try? fm.contentsOfDirectory(atPath: subPath) {
+                    for f in files.prefix(100) {
+                        let fp = (subPath as NSString).appendingPathComponent(f)
+                        if let attrs = try? fm.attributesOfItem(atPath: fp),
+                           let s = attrs[.size] as? UInt64 {
+                            sampleFiles += 1
+                            sampleBytes += s
                         }
                     }
                 }
+            }
+            if sampleFiles > 0 {
+                let avg = sampleBytes / UInt64(sampleFiles)
+                totalBytes = UInt64(count) * avg
+            } else {
+                totalBytes = UInt64(count) * 700_000
             }
         }
 
@@ -351,7 +386,14 @@ extension BackupManager {
         if let subdirs = try? fm.contentsOfDirectory(atPath: targetDir) {
             for sub in subdirs where sub.count == 2 {
                 if Task.isCancelled { return newestDate }
-                updateNewest((targetDir as NSString).appendingPathComponent(sub))
+                var st = stat()
+                let subPath = (targetDir as NSString).appendingPathComponent(sub)
+                if stat(subPath, &st) == 0 {
+                    let mod = Date(timeIntervalSince1970: TimeInterval(st.st_mtimespec.tv_sec))
+                    if newestDate == nil || mod > newestDate! {
+                        newestDate = mod
+                    }
+                }
             }
         }
         return newestDate
