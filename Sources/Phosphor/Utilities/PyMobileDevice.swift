@@ -744,12 +744,18 @@ enum PyMobileDevice {
 
     // MARK: - Apps
 
-    /// List installed apps. Returns JSON array.
-    static func appsList(udid: String? = nil) async -> [[String: Any]] {
+    /// List installed apps with optional size calculation (Issue #4).
+    static func appsList(
+        udid: String? = nil,
+        calculateSizes: Bool = false,
+        timeoutOverride: TimeInterval? = nil
+    ) async -> [[String: Any]] {
         var args = ["apps", "list"]
+        if calculateSizes { args.append("--calculate-sizes") }
         if let udid { args += ["--udid", udid] }
 
-        let result = await runAsync(args, timeout: 60)
+        let timeout = timeoutOverride ?? (calculateSizes ? 120 : 60)
+        let result = await runAsync(args, timeout: timeout)
         guard result.succeeded else { return [] }
 
         // Try JSON
@@ -788,12 +794,14 @@ enum PyMobileDevice {
 
     // MARK: - Backup
 
-    /// Create a backup.
+    /// Create a backup with optional domain filters and manifest patching (Issues #4 & #5).
     static func backup(
         directory: String,
         udid: String? = nil,
         full: Bool = true,
         preferNetwork: Bool = false,
+        onlyRegex: [String]? = nil,
+        patchManifest: Bool = false,
         timeout: TimeInterval? = 6 * 60 * 60,
         onOutput: @escaping (String) -> Void,
         onError: @escaping (String) -> Void = { _ in },
@@ -801,6 +809,12 @@ enum PyMobileDevice {
     ) -> Shell.ManagedProcess? {
         var args = ["backup2", "backup"]
         if full { args.append("--full") }
+        if patchManifest { args.append("--patch-manifest") }
+        if let onlyRegex {
+            for regex in onlyRegex where !regex.isEmpty {
+                args += ["--only-regex", regex]
+            }
+        }
         // `--mobdev2` can prompt when the same wireless device is advertised on
         // multiple addresses, which crashes in Phosphor's non-interactive
         // Process runner. For Wi-Fi backups, let the libimobiledevice fallback
@@ -986,14 +1000,76 @@ enum PyMobileDevice {
 
     // MARK: - Utility
 
+    struct ProgressDetails {
+        let fraction: Double
+        let percent: Int
+        let eta: String?
+        let speed: String?
+        let transferred: String?
+        let total: String?
+    }
+
     /// Parse backup progress from pymobiledevice3 tqdm output.
     /// Matches patterns like "42%|..." or "Progress: 42%"
     static func parseProgress(from text: String) -> Double? {
-        let pattern = #"(\d+)%"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
-              let range = Range(match.range(at: 1), in: text),
-              let value = Double(text[range]) else { return nil }
-        return value / 100.0
+        parseProgressDetails(from: text)?.fraction
+    }
+
+    /// Parse rich progress details from tqdm or idevicebackup2 text:
+    /// e.g. " 42%|████▏ | 12.3G/29.5G [05:21<07:15, 39.5MB/s]"
+    static func parseProgressDetails(from text: String) -> ProgressDetails? {
+        let pctPattern = #"(\d+)%"#
+        guard let pctRegex = try? NSRegularExpression(pattern: pctPattern),
+              let pctMatch = pctRegex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let pctRange = Range(pctMatch.range(at: 1), in: text),
+              let pctVal = Int(text[pctRange]) else { return nil }
+
+        var eta: String?
+        var speed: String?
+        var transferred: String?
+        var total: String?
+
+        // Parse ETA: e.g. "<07:15" or "<1:05:20"
+        let etaPattern = #"<(\d+:\d+(?::\d+)?)"#
+        if let etaRegex = try? NSRegularExpression(pattern: etaPattern),
+           let etaMatch = etaRegex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+           let etaRange = Range(etaMatch.range(at: 1), in: text) {
+            let rawEta = String(text[etaRange])
+            let parts = rawEta.split(separator: ":").compactMap { Int($0) }
+            if parts.count == 2 {
+                eta = "\(parts[0])m \(parts[1])s"
+            } else if parts.count == 3 {
+                eta = "\(parts[0])h \(parts[1])m \(parts[2])s"
+            } else {
+                eta = rawEta
+            }
+        }
+
+        // Parse Speed: e.g. "39.5MB/s" or "1.2GB/s" or "20it/s"
+        let speedPattern = #",\s*([\d\.]+\s*(?:[KMG]B/s|it/s))"#
+        if let speedRegex = try? NSRegularExpression(pattern: speedPattern),
+           let speedMatch = speedRegex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+           let speedRange = Range(speedMatch.range(at: 1), in: text) {
+            speed = String(text[speedRange])
+        }
+
+        // Parse Transfer sizes: e.g. "12.3G/29.5G" or "123M/456M"
+        let sizePattern = #"([\d\.]+[KMG]?)/([\d\.]+[KMG]?)"#
+        if let sizeRegex = try? NSRegularExpression(pattern: sizePattern),
+           let sizeMatch = sizeRegex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+           let tRange = Range(sizeMatch.range(at: 1), in: text),
+           let totRange = Range(sizeMatch.range(at: 2), in: text) {
+            transferred = String(text[tRange])
+            total = String(text[totRange])
+        }
+
+        return ProgressDetails(
+            fraction: Double(pctVal) / 100.0,
+            percent: pctVal,
+            eta: eta,
+            speed: speed,
+            transferred: transferred,
+            total: total
+        )
     }
 }
