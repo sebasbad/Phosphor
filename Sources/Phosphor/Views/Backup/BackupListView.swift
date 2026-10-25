@@ -654,12 +654,18 @@ struct BackupListView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 4) {
-                            ProgressView(
-                                value: activity.displayProgressFraction,
-                                total: 1.0
-                            )
-                            .progressViewStyle(.linear)
-                            .tint(activity.isAwaitingPasscode ? .orange : (activity.isQuiet ? .secondary : .brandAccent))
+                            if activity.isCalculatingResumeBaseline {
+                                ProgressView()
+                                    .progressViewStyle(.linear)
+                                    .tint(.orange)
+                            } else {
+                                ProgressView(
+                                    value: activity.displayProgressFraction,
+                                    total: 1.0
+                                )
+                                .progressViewStyle(.linear)
+                                .tint(activity.isAwaitingPasscode ? .orange : (activity.isQuiet ? .secondary : .brandAccent))
+                            }
 
                             Text(activity.isFinalizing ? (activity.finalizationMetrics != nil ? "Reorganizing files from snapshot onto disk. Do not disconnect." : "Consolidating files and sealing backup manifest on disk...") : (activity.isQuiet ? "Waiting for device response…" : "Progress is saved automatically. You can stop or unplug and resume later."))
                                 .font(.system(size: 10))
