@@ -188,7 +188,7 @@ struct ContentView: View {
         case .devices:
             DeviceOverviewView(onShowPreflight: { device in
                 preflightIncremental = backupVM.backups.contains {
-                    ($0.udid == device.id || $0.id == device.id) && $0.healthState == .complete
+                    !$0.isArchivedSnapshot && ($0.udid == device.id || $0.id == device.id) && $0.healthState == .complete
                 }
                 preflightPreferNetwork = device.connectionType == .wifi
                 preflightConfig = DeviceBackupConfiguration.load(for: device.id)

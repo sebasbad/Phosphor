@@ -69,7 +69,7 @@ struct DeviceOverviewView: View {
             isPresented: $showIncompleteBackupTrashConfirm,
             titleVisibility: .visible
         ) {
-            Button("Move to Trash & Run Full Backup", role: .destructive) {
+            Button("Move to Trash & Run Full Backup") {
                 if let issue = pendingIncompleteBackupIssue {
                     Task { await backupVM.deleteIncompleteBackupAndRunFull(for: issue) }
                 }
