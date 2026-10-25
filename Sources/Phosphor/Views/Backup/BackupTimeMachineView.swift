@@ -168,6 +168,16 @@ struct BackupTimeMachineView: View {
                         .foregroundStyle(.orange)
                 }
 
+                if backup.healthState != .complete {
+                    Text(backup.healthState == .paused ? "Paused" : "Broken")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(backup.healthState == .paused ? Color.orange.opacity(0.85) : Color.red.opacity(0.85))
+                        .clipShape(Capsule())
+                }
+
                 Text(backup.sizeString)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.7))
@@ -207,6 +217,8 @@ struct BackupTimeMachineView: View {
                         .buttonStyle(.borderedProminent)
                         .tint(.brandAccent)
                         .controlSize(.small)
+                        .disabled(backup.healthState != .complete)
+                        .help(backup.healthState != .complete ? "Incomplete backups cannot be restored until resumed and finalized." : "Restore this backup to the selected device")
 
                         Button("Browse") {
                             if backupVM.openBackupBrowser(backup) {

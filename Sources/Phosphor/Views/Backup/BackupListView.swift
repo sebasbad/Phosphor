@@ -761,7 +761,9 @@ struct BackupIssueSheet: View {
                 }
             }
 
-            if let details = issue.technicalDetails, !details.isEmpty {
+            if let details = issue.technicalDetails,
+               !details.isEmpty,
+               details != issue.recoveryPath {
                 DisclosureGroup("Technical details", isExpanded: $showTechnicalDetails) {
                     ScrollView {
                         Text(details)
@@ -909,9 +911,24 @@ struct BackupRow: View {
     private var activityStatus: some View {
         if let activity, isActive {
             VStack(alignment: .leading, spacing: 4) {
+                if activity.isAwaitingPasscode {
+                    HStack(spacing: 8) {
+                        Image(systemName: "lock.shield.fill")
+                            .foregroundStyle(.orange)
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("Action Required on iPhone: Unlock your device and enter your passcode to continue the backup...")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.orange)
+                    }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+                    .background(Color.orange.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+
                 ProgressView(value: activity.displayProgressFraction, total: 1.0)
                     .progressViewStyle(.linear)
-                    .tint(isStalled ? .orange : (isQuiet ? .secondary : .brandAccent))
+                    .tint(activity.isAwaitingPasscode ? .orange : (isStalled ? .orange : (isQuiet ? .secondary : .brandAccent)))
 
             HStack(spacing: 6) {
                 let pct = Int(activity.displayProgressFraction * 100)

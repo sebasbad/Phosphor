@@ -372,25 +372,20 @@ struct BackupPreflightSheet: View {
                 .keyboardShortcut(.cancelAction)
 
                 Button {
-                    let hasPriorBackup = hasExistingBackup
-                    let isIncrementalRun = incremental
+                    let hasPriorCompleteBackup = hasExistingBackup
+                    let isIncrementalRun = incremental && hasPriorCompleteBackup
                     let targetUDID = device.id
                     let targetDir = backupDirectory
                     configuration.save(for: targetUDID)
                     dismiss()
-                    if hasPriorBackup {
-                        Task { @MainActor in
-                            _ = await Task.detached(priority: .userInitiated) {
-                                if isIncrementalRun {
-                                    return BackupManager.cloneBackupSnapshot(for: targetUDID, in: targetDir)
-                                } else {
-                                    return BackupManager.archiveExistingBackup(for: targetUDID, in: targetDir)
-                                }
-                            }.value
-                            onNavigateToBackups()
-                            onStartBackup()
-                        }
-                    } else {
+                    Task { @MainActor in
+                        _ = await Task.detached(priority: .userInitiated) {
+                            if isIncrementalRun {
+                                return BackupManager.cloneBackupSnapshot(for: targetUDID, in: targetDir)
+                            } else {
+                                return BackupManager.archiveExistingBackup(for: targetUDID, in: targetDir)
+                            }
+                        }.value
                         onNavigateToBackups()
                         onStartBackup()
                     }
