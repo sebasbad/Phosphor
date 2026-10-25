@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import SwiftUI
+@preconcurrency import UserNotifications
 
 /// Drives backup list, creation, browsing, and extraction UI.
 @MainActor
@@ -100,6 +102,8 @@ final class BackupViewModel: ObservableObject {
         /// incomplete-backup stats. Real baseline for the resume phase detail.
         var resumeFileBaseline: Int?
         var isAwaitingPasscode: Bool = false
+        var hasReceivedTransferProgress: Bool = false
+        var hasNotifiedPasscodePrompt: Bool = false
         var errorMessage: String?
 
         // Enhanced phase tracking
@@ -358,6 +362,7 @@ final class BackupViewModel: ObservableObject {
     private var backupJobTasks: [String: Task<Void, Never>] = [:]
     private var finalizationTasks: [String: Task<Void, Never>] = [:]
     private var livenessTasks: [String: Task<Void, Never>] = [:]
+    private var resumeBaselineTasks: [String: Task<Void, Never>] = [:]
     private var backupCompletionContinuations: [String: CheckedContinuation<Void, Never>] = [:]
     private var backupJobWaiters: [String: [BackupJobWaiter]] = [:]
 
@@ -774,30 +779,6 @@ final class BackupViewModel: ObservableObject {
         let manager = BackupManager()
         backupManagers[udid] = manager
         let isResume = request.isResume
-        var baselineFraction: Double = 0.0
-        var resumeFileCount: Int?
-        if isResume {
-            let stats = await Task.detached(priority: .utility) {
-                BackupManager.incompleteBackupStats(for: udid)
-            }.value
-            if let stats {
-                resumeFileCount = stats.fileCount
-                if let device = request.device, let calculatedFraction = stats.completionFraction(for: device) {
-                    // Accurately reflect preserved progress up to 99%
-                    baselineFraction = min(max(calculatedFraction, 0.05), 0.99)
-                } else if stats.totalBytes > 1_000_000_000 {
-                    // Fallback when device capacity is unknown: scale generously up to 95%
-                    baselineFraction = min(Double(stats.totalBytes) / 70_000_000_000.0, 0.95)
-                    baselineFraction = max(baselineFraction, 0.10)
-                } else if stats.fileCount > 5000 {
-                    baselineFraction = 0.10
-                } else {
-                    baselineFraction = 0.05
-                }
-            } else {
-                baselineFraction = 0.05
-            }
-        }
         guard !Task.isCancelled else {
             updateActivity(udid: udid) {
                 $0.state = .cancelled
@@ -809,13 +790,71 @@ final class BackupViewModel: ObservableObject {
         updateActivity(udid: udid) {
             $0.state = .running
             $0.isResume = isResume
-            $0.resumeBaselineFraction = baselineFraction
-            $0.resumeFileBaseline = resumeFileCount
+            $0.resumeBaselineFraction = isResume ? 0.05 : 0.0
+            $0.resumeFileBaseline = nil
             $0.progressText = isResume ? "Resuming..." : "Preparing..."
             $0.lastProgressUpdate = Date()
         }
         startObservability(udid: udid, isResume: isResume)
         startLivenessMonitor(udid: udid)
+        if isResume {
+            let requestDevice = request.device
+            resumeBaselineTasks[udid]?.cancel()
+            resumeBaselineTasks[udid] = Task { [weak self] in
+                let stats = await Task.detached(priority: .utility) {
+                    BackupManager.incompleteBackupStats(for: udid)
+                }.value
+                guard !Task.isCancelled, let self else { return }
+                var baselineFraction: Double = 0.05
+                var resumeFileCount: Int?
+                if let stats {
+                    resumeFileCount = stats.fileCount
+                    if let device = requestDevice, let calculatedFraction = stats.completionFraction(for: device) {
+                        // Accurately reflect preserved progress up to 99%
+                        baselineFraction = min(max(calculatedFraction, 0.05), 0.99)
+                    } else if stats.totalBytes > 1_000_000_000 {
+                        // Fallback when device capacity is unknown: scale generously up to 95%
+                        baselineFraction = min(Double(stats.totalBytes) / 70_000_000_000.0, 0.95)
+                        baselineFraction = max(baselineFraction, 0.10)
+                    } else if stats.fileCount > 5000 {
+                        baselineFraction = 0.10
+                    } else {
+                        baselineFraction = 0.05
+                    }
+                }
+                self.updateActivity(udid: udid) {
+                    $0.resumeBaselineFraction = baselineFraction
+                    $0.resumeFileBaseline = resumeFileCount
+                    if let coordinator = $0.observabilityCoordinator {
+                        var context = PhaseContext()
+                        context.filesResumed = resumeFileCount
+                        context.resumeBaselineFraction = baselineFraction > 0 ? baselineFraction : nil
+                        context.sanitizationScanned = $0.sanitizationScanned
+                        context.sanitizationCleaned = $0.sanitizationCleaned
+                        context.sanitizationWalCheckpointed = $0.sanitizationWalCheckpointed
+                        context.fallbackReason = $0.fallbackReason
+                        context.currentDomain = $0.currentDomain
+                        coordinator.updateMetrics(
+                            phase: $0.observabilityPhase,
+                            progressFraction: $0.progressFraction,
+                            bytesTransferred: nil,
+                            filesTransferred: nil,
+                            totalBytes: nil,
+                            totalFiles: nil,
+                            currentFile: nil,
+                            speedBytesPerSec: $0.speed.flatMap(Self.parseSpeedToBytesPerSecond),
+                            speedFilesPerSec: nil,
+                            eta: $0.eta.flatMap(Self.parseEtaToSeconds),
+                            isFinalizing: $0.isFinalizing,
+                            finalizationMetrics: $0.finalizationMetrics,
+                            context: context
+                        )
+                        $0.phaseMetrics = coordinator.phaseMetrics
+                    }
+                }
+                self.refreshLegacyProgressState()
+            }
+        }
         refreshLegacyProgressState()
         loadBackups()
 
@@ -917,6 +956,7 @@ final class BackupViewModel: ObservableObject {
         updateActivity(udid: udid) { $0.transition = nil }
         finalizationTasks.removeValue(forKey: udid)?.cancel()
         livenessTasks.removeValue(forKey: udid)?.cancel()
+        resumeBaselineTasks.removeValue(forKey: udid)?.cancel()
         requestTracker.finish(udid: udid)
         pendingBackupRequests.removeValue(forKey: udid)
         backupManagers.removeValue(forKey: udid)
@@ -960,12 +1000,32 @@ final class BackupViewModel: ObservableObject {
                         BackupManager.latestBackupDiskActivityDate(for: udid)
                     )
                 }.value
+                var shouldNotifyPasscode = false
                 self.updateActivity(udid: udid) {
                     $0.processAlive = true
                     if let domain { $0.currentDomain = domain }
                     if let diskDate, diskDate > $0.lastProgressUpdate {
                         $0.lastProgressUpdate = diskDate
+                        if diskDate > $0.startTime.addingTimeInterval(2.0) {
+                            $0.hasReceivedTransferProgress = true
+                            $0.isAwaitingPasscode = false
+                        }
                     }
+                    // If the backup process has been running for 3+ seconds with zero transfer progress
+                    // and we are past local sanitization, iOS is waiting at the lock screen / passcode prompt.
+                    if !$0.hasReceivedTransferProgress,
+                       $0.transition == nil,
+                       $0.explicitPhase != .sanitization,
+                       Date().timeIntervalSince($0.startTime) >= 3.0 {
+                        $0.isAwaitingPasscode = true
+                        if !$0.hasNotifiedPasscodePrompt {
+                            $0.hasNotifiedPasscodePrompt = true
+                            shouldNotifyPasscode = true
+                        }
+                    }
+                }
+                if shouldNotifyPasscode {
+                    self.notifyUserDevicePasscodeRequired(for: udid)
                 }
                 if !hasTriggeredMidRunRefresh, diskDate != nil {
                     hasTriggeredMidRunRefresh = true
@@ -973,6 +1033,36 @@ final class BackupViewModel: ObservableObject {
                 }
                 self.refreshLegacyProgressState()
             }
+        }
+    }
+
+    /// Alerts the user via Dock bounce, system sound, and macOS UserNotifications when the iPhone/iPad
+    /// is waiting for passcode entry or unlock during backup/resume handshake.
+    private func notifyUserDevicePasscodeRequired(for udid: String) {
+        let deviceName = latestBackupRequests[udid]?.device?.name
+            ?? backups.first(where: { $0.udid == udid || $0.id == udid })?.deviceName
+            ?? "your iPhone or iPad"
+
+        NSSound.beep()
+        if !NSApp.isActive {
+            NSApp.requestUserAttention(.informationalRequest)
+        }
+
+        // UNUserNotificationCenter requires a valid app bundle identifier at runtime; guard so CLI test probes never trap.
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = "Action Required on \(deviceName)"
+            content.body = "Unlock \(deviceName) and enter your passcode on the device screen to continue the backup."
+            content.sound = .default
+            let request = UNNotificationRequest(
+                identifier: "phosphor.passcode.\(udid)",
+                content: content,
+                trigger: nil
+            )
+            center.add(request)
         }
     }
 
@@ -1049,6 +1139,7 @@ final class BackupViewModel: ObservableObject {
             || lower.contains("not paired")
         var transferredBytes: Int64?
         var totalBytes: Int64?
+        var shouldNotifyPasscode = false
         updateActivity(udid: udid) { activity in
             // A pause/restart is tearing the process down; late progress lines
             // must not overwrite the "Pausing..." status the user was promised.
@@ -1058,12 +1149,17 @@ final class BackupViewModel: ObservableObject {
             activity.processAlive = true
             if awaitingPasscode {
                 activity.isAwaitingPasscode = true
+                if !activity.hasNotifiedPasscodePrompt {
+                    activity.hasNotifiedPasscodePrompt = true
+                    shouldNotifyPasscode = true
+                }
             }
             var parsedProgress = false
             if let details = PyMobileDevice.parseProgressDetails(from: text) {
                 parsedProgress = true
                 // If we receive active transfer speed or progress, user has completed unlocking
                 if details.speed != nil || details.fraction > 0.001 {
+                    activity.hasReceivedTransferProgress = true
                     activity.isAwaitingPasscode = false
                 }
                 // Ignore transient sub-phase 100% resets unless truly completing
@@ -1080,6 +1176,7 @@ final class BackupViewModel: ObservableObject {
             } else if let pct = PyMobileDevice.parseProgress(from: text) {
                 parsedProgress = true
                 if pct > 0.001 {
+                    activity.hasReceivedTransferProgress = true
                     activity.isAwaitingPasscode = false
                 }
                 if pct >= 0.99 && activity.progressFraction ?? 0 < 0.85 {
@@ -1090,6 +1187,7 @@ final class BackupViewModel: ObservableObject {
                 }
             } else if manager.backupPercent > 0 {
                 parsedProgress = true
+                activity.hasReceivedTransferProgress = true
                 activity.isAwaitingPasscode = false
                 let current = activity.progressFraction ?? 0.0
                 activity.progressFraction = max(current, manager.backupPercent)
@@ -1149,6 +1247,9 @@ final class BackupViewModel: ObservableObject {
                 activity.throughputStats = coordinator.throughputStats
                 activity.throughputTrend = coordinator.throughputTrend
             }
+        }
+        if shouldNotifyPasscode {
+            notifyUserDevicePasscodeRequired(for: udid)
         }
         refreshLegacyProgressState()
     }
@@ -1244,7 +1345,9 @@ final class BackupViewModel: ObservableObject {
             udid: udid,
             incremental: false,
             preferNetwork: request?.preferNetwork ?? false,
-            encrypted: request?.encrypted ?? false
+            encrypted: request?.encrypted ?? false,
+            device: request?.device,
+            configuration: request?.configuration
         )
     }
 
@@ -1289,7 +1392,9 @@ final class BackupViewModel: ObservableObject {
                 udid: udid,
                 incremental: false,
                 preferNetwork: request?.preferNetwork ?? false,
-                encrypted: request?.encrypted ?? false
+                encrypted: request?.encrypted ?? false,
+                device: request?.device,
+                configuration: request?.configuration
             )
         } catch {
             backupIssue = BackupManager.BackupFailure(
@@ -1310,7 +1415,10 @@ final class BackupViewModel: ObservableObject {
             udid: request.udid,
             incremental: request.incremental,
             preferNetwork: request.preferNetwork,
-            encrypted: request.encrypted
+            encrypted: request.encrypted,
+            isResume: request.isResume,
+            device: request.device,
+            configuration: request.configuration
         )
     }
 

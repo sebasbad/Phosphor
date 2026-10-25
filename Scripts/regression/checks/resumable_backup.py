@@ -97,4 +97,19 @@ def test_backup_health_state_metadata_guard_and_quarantine(root: Path) -> None:
     assert_contains(list_view, 'Label("Unarchive", systemImage: "arrow.uturn.backward.circle")', "BackupRow must offer Unarchive button for archived snapshots")
 
 
+def test_retry_preserves_resume_and_notifies_passcode(root: Path) -> None:
+    vm = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+    list_view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+    tm_view = read(root, "Sources/Phosphor/Views/Backup/BackupTimeMachineView.swift")
+
+    assert_contains(vm, "isResume: request.isResume", "retryBackup must forward isResume so retrying a failed resume does not trigger Incomplete Backup Found")
+    assert_contains(vm, "func notifyUserDevicePasscodeRequired", "BackupViewModel must notify the user when device passcode/unlock is required")
+    assert_contains(vm, "UNUserNotificationCenter.current()", "BackupViewModel must post a macOS user notification when awaiting passcode")
+    assert_contains(vm, "NSApp.requestUserAttention(.informationalRequest)", "BackupViewModel must bounce the Dock icon when awaiting passcode")
+    assert_contains(list_view, "Action Required on iPhone: Unlock your device and enter your passcode to continue the backup...", "BackupRow must display an inline passcode banner when awaiting passcode")
+    assert_contains(list_view, "details != issue.recoveryPath", "BackupIssueSheet must hide Technical details when details only repeat recoveryPath")
+    assert_contains(tm_view, ".disabled(backup.healthState != .complete)", "BackupTimeMachineView must disable Restore This Backup for incomplete snapshots")
+
+
+
 
