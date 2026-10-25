@@ -807,7 +807,7 @@ final class BackupViewModel: ObservableObject {
         updateActivity(udid: udid) {
             $0.state = .running
             $0.isResume = isResume
-            $0.resumeBaselineFraction = isResume ? 0.05 : 0.0
+            $0.resumeBaselineFraction = 0.0
             $0.resumeFileBaseline = nil
             $0.progressText = isResume ? "Resuming..." : "Preparing..."
             $0.lastProgressUpdate = Date()
@@ -1156,8 +1156,8 @@ final class BackupViewModel: ObservableObject {
     }
 
     var displayProgressFraction: Double {
-        guard let progressFraction else { return 0.05 }
-        return min(max(progressFraction, 0.05), 1.0)
+        guard let progressFraction else { return 0.0 }
+        return min(max(progressFraction, 0.0), 1.0)
     }
 
     private func updateBackupProgress(udid: String, text: String, manager: BackupManager) {

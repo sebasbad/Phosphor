@@ -1228,22 +1228,36 @@ final class BackupManager: ObservableObject {
 
         // Primary: pymobiledevice3 without --full flag to allow delta resumption
         if PyMobileDevice.available() {
-            let pySuccess = await createBackupViaPymobiledevice(
-                udid: udid,
-                directory: backupRoot,
-                full: false,
-                preferNetwork: preferNetwork,
-                configuration: configuration,
-                operationID: operationID,
-                onProgress: onProgress
-            )
-            if pySuccess {
-                return finalizeSuccessfulBackup(udid: udid, directory: backupRoot, operationID: operationID, onProgress: onProgress)
-            }
-            if operationWasCancelled(operationID) {
-                Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
-                markOperationCancelled(operationID)
-                return false
+            var pySuccess = false
+            var attempts = 0
+            while attempts < 3 && !pySuccess && !operationWasCancelled(operationID) {
+                attempts += 1
+                pySuccess = await createBackupViaPymobiledevice(
+                    udid: udid,
+                    directory: backupRoot,
+                    full: false,
+                    preferNetwork: preferNetwork,
+                    configuration: configuration,
+                    operationID: operationID,
+                    onProgress: onProgress
+                )
+                if pySuccess {
+                    return finalizeSuccessfulBackup(udid: udid, directory: backupRoot, operationID: operationID, onProgress: onProgress)
+                }
+                if operationWasCancelled(operationID) {
+                    Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
+                    markOperationCancelled(operationID)
+                    return false
+                }
+                let err = pymobiledeviceStderrTail.joined(separator: "\n").lowercased()
+                // If iOS refused the initial handshake because the screen was asleep or passcode entry was pending (MBErrorDomain/208),
+                // notify user and give a grace window before retrying so it does not fail abruptly in 2 seconds.
+                if attempts < 3 && (err.contains("mberrordomain/208") || err.contains("device locked")) {
+                    onProgress("Device locked. Please unlock iPhone and enter passcode...")
+                    try? await Task.sleep(nanoseconds: 6_000_000_000)
+                } else {
+                    break
+                }
             }
         }
 
