@@ -1178,12 +1178,13 @@ final class BackupViewModel: ObservableObject {
             activity.lastProgressUpdate = Date()
             activity.processAlive = true
             if awaitingPasscode {
-                if !activity.hasReceivedTransferProgress {
-                    activity.isAwaitingPasscode = true
-                    if !activity.hasNotifiedPasscodePrompt {
-                        activity.hasNotifiedPasscodePrompt = true
-                        shouldNotifyPasscode = true
-                    }
+                // Device explicitly requesting user interaction/unlock.
+                // Reset hasReceivedTransferProgress for this lock gate so existing on-disk files do not suppress UI banner.
+                activity.isAwaitingPasscode = true
+                activity.hasReceivedTransferProgress = false
+                if !activity.hasNotifiedPasscodePrompt {
+                    activity.hasNotifiedPasscodePrompt = true
+                    shouldNotifyPasscode = true
                 }
             } else if !text.isEmpty && !awaitingPasscode && activity.isAwaitingPasscode {
                 // Any regular log line after passcode prompt indicates device responded
