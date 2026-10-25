@@ -955,7 +955,10 @@ struct BackupRow: View {
                         if activity.isCalculatingResumeBaseline {
                             return "Resuming · Calculating previous progress…"
                         }
-                        return "Resuming (\(pct)%)"
+                        if pct > 0 {
+                            return "Resuming (\(pct)%)"
+                        }
+                        return "Resuming…"
                     }
                     return "Backing up (\(pct)%)"
                 }()
