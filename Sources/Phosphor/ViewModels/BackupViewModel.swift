@@ -317,6 +317,12 @@ final class BackupViewModel: ObservableObject {
             let bounded = min(max(progressFraction, 0.05), 1.0)
             return state == .completed ? 1.0 : min(bounded, 0.99)
         }
+
+        /// True when a resumable backup is active but the true baseline fraction
+        /// is still calculating in the background.
+        var isCalculatingResumeBaseline: Bool {
+            isResume && resumeBaselineFraction <= 0.05 && progressFraction == nil
+        }
     }
 
     @Published var backups: [BackupInfo] = []
@@ -1017,10 +1023,15 @@ final class BackupViewModel: ObservableObject {
                     if let domain { $0.currentDomain = domain }
                     if let diskDate, diskDate > $0.lastProgressUpdate {
                         $0.lastProgressUpdate = diskDate
-                        if diskDate > $0.startTime.addingTimeInterval(2.0) {
+                        if diskDate > $0.startTime.addingTimeInterval(1.0) {
                             $0.hasReceivedTransferProgress = true
                             $0.isAwaitingPasscode = false
                         }
+                    }
+                    // Also clear passcode banner as soon as process writes payload files or Status.plist
+                    if $0.isAwaitingPasscode && ($0.hasReceivedTransferProgress || BackupManager.incompleteBackupHasPayloadData(BackupManager.backupPath(for: udid))) {
+                        $0.isAwaitingPasscode = false
+                        $0.hasReceivedTransferProgress = true
                     }
                     // If the backup process has been running for 3+ seconds with zero transfer progress
                     // and we are past local sanitization, iOS is waiting at the lock screen / passcode prompt.
@@ -1159,10 +1170,18 @@ final class BackupViewModel: ObservableObject {
             activity.lastProgressUpdate = Date()
             activity.processAlive = true
             if awaitingPasscode {
-                activity.isAwaitingPasscode = true
-                if !activity.hasNotifiedPasscodePrompt {
-                    activity.hasNotifiedPasscodePrompt = true
-                    shouldNotifyPasscode = true
+                if !activity.hasReceivedTransferProgress {
+                    activity.isAwaitingPasscode = true
+                    if !activity.hasNotifiedPasscodePrompt {
+                        activity.hasNotifiedPasscodePrompt = true
+                        shouldNotifyPasscode = true
+                    }
+                }
+            } else if !text.isEmpty && !awaitingPasscode && activity.isAwaitingPasscode {
+                // Any regular log line after passcode prompt indicates device responded
+                if text.contains("mb2") || text.contains("progress") || text.contains("transfer") || text.contains("file") || text.contains("uploading") {
+                    activity.isAwaitingPasscode = false
+                    activity.hasReceivedTransferProgress = true
                 }
             }
             var parsedProgress = false

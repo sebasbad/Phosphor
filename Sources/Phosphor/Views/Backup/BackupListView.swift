@@ -928,9 +928,15 @@ struct BackupRow: View {
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
 
-                ProgressView(value: activity.displayProgressFraction, total: 1.0)
-                    .progressViewStyle(.linear)
-                    .tint(activity.isAwaitingPasscode ? .orange : (isStalled ? .orange : (isQuiet ? .secondary : .brandAccent)))
+                if activity.isCalculatingResumeBaseline {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                        .tint(.orange)
+                } else {
+                    ProgressView(value: activity.displayProgressFraction, total: 1.0)
+                        .progressViewStyle(.linear)
+                        .tint(activity.isAwaitingPasscode ? .orange : (isStalled ? .orange : (isQuiet ? .secondary : .brandAccent)))
+                }
 
             HStack(spacing: 6) {
                 let pct = Int(activity.displayProgressFraction * 100)
@@ -946,6 +952,9 @@ struct BackupRow: View {
                         return "Finalizing & sealing (\(pct)%)"
                     }
                     if activity.isResume {
+                        if activity.isCalculatingResumeBaseline {
+                            return "Resuming · Calculating previous progress…"
+                        }
                         return "Resuming (\(pct)%)"
                     }
                     return "Backing up (\(pct)%)"
