@@ -596,13 +596,6 @@ struct BackupListView: View {
                                     .foregroundStyle(.secondary)
                             }
                         } else if activity.isStalled {
-                            Button("Restart") {
-                                Task { await backupVM.restartStalledBackup(udid: activity.udid, device: deviceVM.devices.first(where: { $0.id == activity.udid })) }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(.orange)
-                            .controlSize(.small)
-                            .help("No progress for 5+ minutes - restarts this backup from saved progress")
                             Button {
                                 if activity.isNonResumableFinalizationPhase {
                                     pendingCancelActivityUDID = activity.udid
@@ -1141,24 +1134,14 @@ struct BackupRow: View {
                             .foregroundStyle(.secondary)
                     }
                 } else if isActive {
+                    Button("Pause & Save", action: onPause)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help("Stops the backup and saves progress. You can resume later.")
                     if isStalled {
-                        Button("Restart", action: onResume)
-                            .buttonStyle(.borderedProminent)
-                            .tint(.orange)
-                            .controlSize(.small)
-                            .help("No progress for 5+ minutes - restarts this backup from saved progress")
-                        Button("Pause & Save", action: onPause)
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .help("Stops the backup and saves progress. You can resume later.")
                         Button("Diagnose…") { onDiagnose() }
                             .controlSize(.small)
                             .help("Show why this backup stalled")
-                    } else {
-                        Button("Pause & Save", action: onPause)
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .help("Stops the backup and saves progress. You can resume later.")
                     }
                 } else {
                     switch backup.healthState {
