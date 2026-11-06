@@ -102,6 +102,7 @@ def test_backup_health_state_metadata_guard_and_quarantine(root: Path) -> None:
 
 def test_retry_preserves_resume_and_notifies_passcode(root: Path) -> None:
     vm = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+    pmd = read(root, "Sources/Phosphor/Utilities/PyMobileDevice.swift")
     list_view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
     tm_view = read(root, "Sources/Phosphor/Views/Backup/BackupTimeMachineView.swift")
 
@@ -109,6 +110,9 @@ def test_retry_preserves_resume_and_notifies_passcode(root: Path) -> None:
     assert_contains(vm, "func notifyUserDevicePasscodeRequired", "BackupViewModel must notify the user when device passcode/unlock is required")
     assert_contains(vm, "UNUserNotificationCenter.current()", "BackupViewModel must post a macOS user notification when awaiting passcode")
     assert_contains(vm, "NSApp.requestUserAttention(.informationalRequest)", "BackupViewModel must bounce the Dock icon when awaiting passcode")
+    assert_contains(vm, 'lower.contains("passcode prompt dismissed")', "BackupViewModel must immediately clear passcode banner when NP_LOCAL_AUTH_DISMISSED is emitted")
+    assert_contains(vm, "let awaitingPasscode = !passcodeDismissed", "BackupViewModel must not treat 'Device passcode prompt dismissed' as a passcode request")
+    assert_contains(pmd, '"-v", "--no-color", "backup2", "backup"', "PyMobileDevice.backup must enable verbose notification logs so passcode dismissal is surfaced immediately")
     assert_contains(list_view, "Action Required on iPhone: Unlock your device and enter your passcode to continue the backup...", "BackupRow must display an inline passcode banner when awaiting passcode")
     assert_contains(list_view, "details != issue.recoveryPath", "BackupIssueSheet must hide Technical details when details only repeat recoveryPath")
     assert_contains(tm_view, ".disabled(backup.healthState != .complete)", "BackupTimeMachineView must disable Restore This Backup for incomplete snapshots")
