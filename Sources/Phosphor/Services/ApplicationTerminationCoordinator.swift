@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 
+
 /// AppKit termination bridge for every BackupManager owner in the process.
 /// Quit is deferred until each managed backup/restore process group has been
 /// cancelled and reaped; new operations are refused once draining begins.
@@ -9,8 +10,8 @@ final class ApplicationTerminationCoordinator {
     static let shared = ApplicationTerminationCoordinator()
 
     private final class WeakManager {
-        weak var value: BackupManager?
-        init(_ value: BackupManager) { self.value = value }
+        weak var value: Phosphor.BackupManager?
+        init(_ value: Phosphor.BackupManager) { self.value = value }
     }
 
     private var managers: [ObjectIdentifier: WeakManager] = [:]

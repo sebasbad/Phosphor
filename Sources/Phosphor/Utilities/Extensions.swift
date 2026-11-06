@@ -76,11 +76,17 @@ extension String {
 extension FileManager {
     func directorySize(at path: String) -> UInt64 {
         var totalSize: UInt64 = 0
+        var seenInodes = Set<UInt64>()
         guard let enumerator = enumerator(atPath: path) else { return 0 }
         while let file = enumerator.nextObject() as? String {
             let fullPath = (path as NSString).appendingPathComponent(file)
             if let attrs = try? attributesOfItem(atPath: fullPath),
+               let fileType = attrs[.type] as? FileAttributeType,
+               fileType == .typeRegular,
                let size = attrs[.size] as? UInt64 {
+                if let inode = attrs[.systemFileNumber] as? UInt64 {
+                    guard seenInodes.insert(inode).inserted else { continue }
+                }
                 totalSize += size
             }
         }

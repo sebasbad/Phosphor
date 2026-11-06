@@ -2,6 +2,12 @@ import Foundation
 
 /// Represents an iOS backup stored on disk.
 struct BackupInfo: Identifiable, Hashable, Sendable {
+    enum HealthState: String, Hashable, Sendable {
+        case complete = "Complete"
+        case paused = "Paused"
+        case broken = "Broken"
+    }
+
     let id: String // backup directory name (usually UDID or UDID+timestamp)
     let path: String
     let deviceName: String
@@ -16,6 +22,7 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
     let size: UInt64
     let sizeResolved: Bool
     let appCount: Int
+    var healthState: HealthState = .complete
 
     var modelName: String {
         BackupInfoPlist(
@@ -69,6 +76,81 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
         size.formattedFileSize
     }
 
+    /// True when this backup folder is a timestamped historical archive
+    /// (e.g., `<UDID>-phosphor-bkp-YYYYMMDD-HHmmss` or Finder `<UDID>-YYYYMMDD-HHmmss`)
+    /// rather than the primary mutable `<UDID>` slot.
+    var isArchivedSnapshot: Bool {
+        guard !udid.isEmpty, !id.isEmpty else { return false }
+        return id != udid
+    }
+
+    /// Concise status suffix for backup selector menus across Data tabs and Snapshot Comparison.
+    var pickerStatusSuffix: String {
+        switch (isArchivedSnapshot, healthState) {
+        case (true, .complete):
+            return " • Archived"
+        case (true, .paused):
+            return " • Archived (Paused)"
+        case (true, .broken):
+            return " • Archived (Broken)"
+        case (false, .paused):
+            return " • Paused"
+        case (false, .broken):
+            return " • Broken"
+        case (false, .complete):
+            return ""
+        }
+    }
+
+    /// Deterministic 3-state health classification (Issue #8):
+    /// - `.complete`: Manifest metadata exists, payload buckets (`00`..`ff`) exist at root, no unpromoted `Snapshot/`, and `SnapshotState == "finished"`.
+    /// - `.paused`: Payload files exist in `00`..`ff` or `Snapshot/`, and backup is awaiting resumption (`Snapshot/` exists or `SnapshotState != "finished"`).
+    /// - `.broken`: Metadata files exist (`Info.plist` / `Manifest.db`), but zero payload files exist in `00`..`ff` or `Snapshot/`.
+    static func computeHealthState(at path: String, snapshotState: String? = nil) -> HealthState {
+        let manifestDb = (path as NSString).appendingPathComponent("Manifest.db")
+        let manifestPlist = (path as NSString).appendingPathComponent("Manifest.plist")
+        let fm = FileManager.default
+        let hasManifest = (fm.fileExists(atPath: manifestDb) && ((try? fm.attributesOfItem(atPath: manifestDb)[.size] as? UInt64) ?? 0) > 0) ||
+                          (fm.fileExists(atPath: manifestPlist) && ((try? fm.attributesOfItem(atPath: manifestPlist)[.size] as? UInt64) ?? 0) > 0)
+        let hasRootPayload = BackupManager.backupRootHasPayloadData(path)
+        let hasAnyPayload = hasRootPayload || BackupManager.incompleteBackupHasPayloadData(path)
+        let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
+        var isSnapshotDir: ObjCBool = false
+        let hasSnapshotDir = fm.fileExists(atPath: snapshotPath, isDirectory: &isSnapshotDir) && isSnapshotDir.boolValue
+
+        let resolvedSnapshotState: String? = {
+            if let snapshotState { return snapshotState }
+            let statusPath = (path as NSString).appendingPathComponent("Status.plist")
+            guard let data = fm.contents(atPath: statusPath),
+                  let plist = (try? PropertyListSerialization.propertyList(from: data, options: [], format: nil)) as? [String: Any] else {
+                return nil
+            }
+            return plist["SnapshotState"] as? String
+        }()
+
+        // If Snapshot/ directory exists with SnapshotState == "uploading", it is an in-progress/paused snapshot, not broken
+        if hasSnapshotDir && resolvedSnapshotState?.lowercased() == "uploading" {
+            return .paused
+        }
+
+        guard hasAnyPayload else { return .broken }
+        guard hasManifest else { return .paused }
+
+        if hasSnapshotDir, BackupManager.backupRootHasPayloadData(snapshotPath) {
+            return .paused
+        }
+
+        guard let resolvedSnapshotState else {
+            return hasRootPayload ? .paused : .broken
+        }
+        return (hasRootPayload && resolvedSnapshotState.lowercased() == "finished") ? .complete : .paused
+    }
+
+    /// Whether this backup has sealed metadata and completed snapshot files.
+    var isComplete: Bool {
+        healthState == .complete
+    }
+
     /// Initialize from a backup directory by parsing its plists.
     /// Size calculation recursively walks the whole backup and can be very slow
     /// for large backups, so startup discovery can skip it and fill sizes later.
@@ -78,6 +160,19 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
         let status = PlistParser.parseBackupStatus(path)
         let manifest = PlistParser.parseManifest(path)
         let size = includeSize ? FileManager.default.directorySize(at: path) : 0
+        let health = computeHealthState(at: path, snapshotState: status?.snapshotState)
+
+        let manifestDbPath = (path as NSString).appendingPathComponent("Manifest.db")
+        let manifestDbDate = (try? FileManager.default.attributesOfItem(atPath: manifestDbPath)[.modificationDate]) as? Date
+        let resolvedDate: Date? = {
+            if let infoDate = info.lastBackupDate { return infoDate }
+            // If Status.plist is a pre-handshake "BackupState = new" stub from an aborted run,
+            // prefer Manifest.db's modification date over the aborted attempt timestamp.
+            if status?.backupState.lowercased() == "new", let manifestDbDate {
+                return manifestDbDate
+            }
+            return status?.date ?? manifestDbDate
+        }()
 
         return BackupInfo(
             id: dirName,
@@ -88,12 +183,13 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
             iosVersion: info.productVersion,
             serialNumber: info.serialNumber,
             udid: info.udid,
-            lastBackupDate: info.lastBackupDate ?? status?.date,
+            lastBackupDate: resolvedDate,
             isEncrypted: manifest?.isEncrypted ?? info.isEncrypted,
             isFullBackup: status?.isFullBackup ?? false,
             size: size,
             sizeResolved: includeSize,
-            appCount: manifest?.applicationBundleIds.count ?? 0
+            appCount: manifest?.applicationBundleIds.count ?? info.appCount,
+            healthState: health
         )
     }
 
@@ -112,7 +208,8 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
             isFullBackup: isFullBackup,
             size: size,
             sizeResolved: true,
-            appCount: appCount
+            appCount: appCount,
+            healthState: healthState
         )
     }
 }
