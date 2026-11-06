@@ -1033,8 +1033,8 @@ final class BackupViewModel: ObservableObject {
                             $0.isAwaitingPasscode = false
                         }
                     }
-                    // Also clear passcode banner as soon as process writes payload files or Status.plist
-                    if $0.isAwaitingPasscode && ($0.hasReceivedTransferProgress || BackupManager.incompleteBackupHasPayloadData(BackupManager.backupPath(for: udid))) {
+                    // Also clear passcode banner as soon as process writes new payload files or Status.plist on a fresh backup
+                    if !$0.isResume && $0.isAwaitingPasscode && ($0.hasReceivedTransferProgress || BackupManager.incompleteBackupHasPayloadData(BackupManager.backupPath(for: udid))) {
                         $0.isAwaitingPasscode = false
                         $0.hasReceivedTransferProgress = true
                     }
@@ -1162,11 +1162,16 @@ final class BackupViewModel: ObservableObject {
 
     private func updateBackupProgress(udid: String, text: String, manager: BackupManager) {
         let lower = text.lowercased()
-        let awaitingPasscode = lower.contains("passcode")
+        let passcodeDismissed = lower.contains("passcode prompt dismissed")
+            || lower.contains("localauthentication.ui.dismissed")
+            || lower.contains("domain_changed")
+        let awaitingPasscode = !passcodeDismissed && (
+            lower.contains("passcode")
             || lower.contains("enter pin")
             || lower.contains("trust this computer")
             || lower.contains("unlock")
             || lower.contains("not paired")
+        )
         var transferredBytes: Int64?
         var totalBytes: Int64?
         var shouldNotifyPasscode = false
@@ -1177,7 +1182,13 @@ final class BackupViewModel: ObservableObject {
             activity.progressText = text
             activity.lastProgressUpdate = Date()
             activity.processAlive = true
-            if awaitingPasscode {
+            if passcodeDismissed {
+                activity.isAwaitingPasscode = false
+                activity.hasReceivedTransferProgress = true
+                if Bundle.main.bundleIdentifier != nil {
+                    UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: ["phosphor.passcode.\(udid)"])
+                }
+            } else if awaitingPasscode {
                 // Device explicitly requesting user interaction/unlock.
                 // Reset hasReceivedTransferProgress for this lock gate so existing on-disk files do not suppress UI banner.
                 activity.isAwaitingPasscode = true
@@ -1188,7 +1199,7 @@ final class BackupViewModel: ObservableObject {
                 }
             } else if !text.isEmpty && !awaitingPasscode && activity.isAwaitingPasscode {
                 // Any regular log line after passcode prompt indicates device responded
-                if text.contains("mb2") || text.contains("progress") || text.contains("transfer") || text.contains("file") || text.contains("uploading") {
+                if lower.contains("mb2") || lower.contains("progress") || lower.contains("transfer") || lower.contains("file") || lower.contains("uploading") {
                     activity.isAwaitingPasscode = false
                     activity.hasReceivedTransferProgress = true
                 }
@@ -1196,8 +1207,10 @@ final class BackupViewModel: ObservableObject {
             var parsedProgress = false
             if let details = PyMobileDevice.parseProgressDetails(from: text) {
                 parsedProgress = true
-                // If we receive active transfer speed or progress, user has completed unlocking
-                if details.speed != nil || details.fraction > 0.001 {
+                // If we receive active transfer speed, progress, or any post-prompt DeviceLink frame (0% manifest download
+                // where tqdm elapsed time is >= 1s, not the 00:00 startup constructor frame), user has completed unlocking
+                let isPostInitFrame = !text.contains("[00:00<")
+                if details.speed != nil || details.fraction > 0.001 || (activity.isAwaitingPasscode && isPostInitFrame) {
                     activity.hasReceivedTransferProgress = true
                     activity.isAwaitingPasscode = false
                 }

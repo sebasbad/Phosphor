@@ -807,7 +807,7 @@ enum PyMobileDevice {
         onError: @escaping (String) -> Void = { _ in },
         completion: @escaping (Int32) -> Void
     ) -> Shell.ManagedProcess? {
-        var args = ["backup2", "backup"]
+        var args = ["-v", "--no-color", "backup2", "backup"]
         if full { args.append("--full") }
         if patchManifest { args.append("--patch-manifest") }
         if let onlyRegex {

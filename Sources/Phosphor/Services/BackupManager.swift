@@ -956,7 +956,7 @@ final class BackupManager: ObservableObject {
                         let l = line.trimmingCharacters(in: .whitespacesAndNewlines)
                         if l.isEmpty { continue }
                         let lower = l.lowercased()
-                        if lower.contains("passcode") || lower.contains("enter pin") || lower.contains("trust this computer") || lower.contains("unlock") || lower.contains("not paired") {
+                        if lower.contains("passcode") || lower.contains("enter pin") || lower.contains("trust this computer") || lower.contains("unlock") || lower.contains("not paired") || lower.contains("dismissed") || lower.contains("domain_changed") {
                             self.backupProgress = l
                             onProgress(l)
                         }
