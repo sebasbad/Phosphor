@@ -384,14 +384,37 @@ extension BackupManager {
         updateNewest(targetDir)
 
         if let subdirs = try? fm.contentsOfDirectory(atPath: targetDir) {
+            var recentBuckets: [(path: String, mtime: TimeInterval)] = []
             for sub in subdirs where sub.count == 2 {
                 if Task.isCancelled { return newestDate }
                 var st = stat()
                 let subPath = (targetDir as NSString).appendingPathComponent(sub)
                 if stat(subPath, &st) == 0 {
-                    let mod = Date(timeIntervalSince1970: TimeInterval(st.st_mtimespec.tv_sec))
+                    let mtimeSec = TimeInterval(st.st_mtimespec.tv_sec)
+                    let mod = Date(timeIntervalSince1970: mtimeSec)
                     if newestDate == nil || mod > newestDate! {
                         newestDate = mod
+                    }
+                    recentBuckets.append((subPath, mtimeSec))
+                }
+            }
+
+            // APFS only updates a directory's mtime when a directory entry is added or removed,
+            // NOT when bytes are appended to an already-open multi-gigabyte file inside that bucket.
+            // Scan the 3 most recently touched buckets to catch active in-flight file writes.
+            recentBuckets.sort { $0.mtime > $1.mtime }
+            for bucket in recentBuckets.prefix(3) {
+                if Task.isCancelled { return newestDate }
+                guard let files = try? fm.contentsOfDirectory(atPath: bucket.path) else { continue }
+                for file in files {
+                    if Task.isCancelled { return newestDate }
+                    var fst = stat()
+                    let filePath = (bucket.path as NSString).appendingPathComponent(file)
+                    if stat(filePath, &fst) == 0 {
+                        let fmod = Date(timeIntervalSince1970: TimeInterval(fst.st_mtimespec.tv_sec))
+                        if newestDate == nil || fmod > newestDate! {
+                            newestDate = fmod
+                        }
                     }
                 }
             }

@@ -596,7 +596,7 @@ struct BackupListView: View {
                                     .foregroundStyle(.secondary)
                             }
                         } else if activity.isStalled {
-                            Button("Resume") {
+                            Button("Restart") {
                                 Task { await backupVM.restartStalledBackup(udid: activity.udid, device: deviceVM.devices.first(where: { $0.id == activity.udid })) }
                             }
                             .buttonStyle(.borderedProminent)
@@ -1142,7 +1142,7 @@ struct BackupRow: View {
                     }
                 } else if isActive {
                     if isStalled {
-                        Button("Resume", action: onResume)
+                        Button("Restart", action: onResume)
                             .buttonStyle(.borderedProminent)
                             .tint(.orange)
                             .controlSize(.small)
