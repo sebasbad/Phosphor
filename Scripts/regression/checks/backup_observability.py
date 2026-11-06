@@ -48,10 +48,10 @@ def test_stalled_resume_restarts_instead_of_deadlocking(root: Path) -> None:
         "cancelling during finalization discards the backup"
     )
     assert "cancelBackup(udid: udid)" in model, "must cancel the wedged job before re-enqueueing"
-    # Both stalled Resume buttons must use the restart path, not plain resume.
-    assert "restartStalledBackup(udid: backup.udid" in view, "persisted-row Resume must restart"
-    assert "restartStalledBackup(udid: activity.udid" in view, "activity-card Resume must restart"
-    assert "resumeBackup(udid: activity.udid)" not in view, "stalled card still calls plain resume"
+    # Persisted-row Resume routes through restartStalledBackup; active rows only show Pause & Save + Diagnose…
+    assert "restartStalledBackup(udid: backup.udid" in view, "persisted-row Resume must restart if called on stalled"
+    assert 'Button("Resume", action: onResume)' in view, "Resume button belongs strictly to paused (!isActive) rows"
+    assert "resumeBackup(udid: activity.udid)" not in view, "stalled card must not call plain resume"
 
 
 def test_finalization_progress_is_not_a_stall(root: Path) -> None:
