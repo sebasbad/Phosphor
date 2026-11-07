@@ -385,12 +385,6 @@ final class BackupViewModel: ObservableObject {
                 let finish = now.addingTimeInterval(secs)
                 return "\(eta) (~\(finish.contextualClockString()))"
             }
-            if let predicted = predictiveETA, predicted.confidence != .none, predicted.estimatedSeconds > 0 {
-                let secs = predicted.estimatedSeconds
-                let durationStr = BackupViewModel.formatEtaSeconds(secs)
-                let finish = now.addingTimeInterval(secs)
-                return "~\(durationStr) (~\(finish.contextualClockString()))"
-            }
             return nil
         }
 
@@ -1547,10 +1541,10 @@ final class BackupViewModel: ObservableObject {
             var parsedProgress = false
             if let details = PyMobileDevice.parseProgressDetails(from: text) {
                 parsedProgress = true
-                // If we receive active transfer speed, progress, or any post-prompt DeviceLink frame (0% manifest download
-                // where tqdm elapsed time is >= 1s, not the 00:00 startup constructor frame), user has completed unlocking
-                let isPostInitFrame = !text.contains("[00:00<")
-                if details.speed != nil || details.fraction > 0.001 || (activity.isAwaitingPasscode && isPostInitFrame) {
+                // Only mark passcode entry as completed when tqdm reports actual transfer progress (>0.1%) or byte speed.
+                // On resumed backups, pymobiledevice3 emits `0%| | 0/100 [00:01<?, ?it/s]` while downloading Manifest.db
+                // BEFORE the user has entered the PIN on the iPhone, so a 0% frame must NEVER dismiss `isAwaitingPasscode`.
+                if details.speed != nil || details.fraction > 0.001 {
                     activity.hasReceivedTransferProgress = true
                     activity.isAwaitingPasscode = false
                 }
@@ -1635,17 +1629,18 @@ final class BackupViewModel: ObservableObject {
             }
 
             if let coordinator = activity.observabilityCoordinator {
+                let isPostPinTransfer = activity.hasReceivedTransferProgress
                 coordinator.updateMetrics(
                     phase: activity.observabilityPhase,
                     progressFraction: activity.progressFraction,
-                    bytesTransferred: transferredBytes,
+                    bytesTransferred: isPostPinTransfer ? transferredBytes : nil,
                     filesTransferred: nil,
-                    totalBytes: totalBytes,
+                    totalBytes: isPostPinTransfer ? totalBytes : nil,
                     totalFiles: nil,
                     currentFile: nil,
-                    speedBytesPerSec: activity.speed.flatMap(Self.parseSpeedToBytesPerSecond),
+                    speedBytesPerSec: isPostPinTransfer ? activity.speed.flatMap(Self.parseSpeedToBytesPerSecond) : nil,
                     speedFilesPerSec: nil,
-                    eta: activity.eta.flatMap(Self.parseEtaToSeconds),
+                    eta: isPostPinTransfer ? activity.eta.flatMap(Self.parseEtaToSeconds) : nil,
                     isFinalizing: activity.isFinalizing,
                     finalizationMetrics: activity.finalizationMetrics,
                     context: {
@@ -1661,9 +1656,9 @@ final class BackupViewModel: ObservableObject {
                     }()
                 )
                 activity.phaseMetrics = coordinator.phaseMetrics
-                activity.predictiveETA = coordinator.predictiveETA
-                activity.throughputStats = coordinator.throughputStats
-                activity.throughputTrend = coordinator.throughputTrend
+                activity.predictiveETA = isPostPinTransfer ? coordinator.predictiveETA : nil
+                activity.throughputStats = isPostPinTransfer ? coordinator.throughputStats : nil
+                activity.throughputTrend = isPostPinTransfer ? coordinator.throughputTrend : .insufficient
             }
         }
         if shouldNotifyPasscode {

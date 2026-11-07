@@ -991,10 +991,6 @@ struct BackupRow: View {
                 }
                 if let consolidatedETA = activity.consolidatedETADescription(at: liveNow) {
                     Text("· ETA: \(consolidatedETA)")
-                } else if let predicted = activity.predictiveETA,
-                          predicted.confidence != .none,
-                          predicted.estimatedSeconds > 0 {
-                    Text("· ETA: ~\(Self.formatDuration(predicted.estimatedSeconds))")
                 } else if !activity.isAwaitingPasscode && !activity.isFinalizing && !isStalled && !isQuiet {
                     Text("· Calculating ETA…")
                         .foregroundStyle(.tertiary)
