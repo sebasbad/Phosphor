@@ -993,6 +993,9 @@ struct BackupRow: View {
                           predicted.confidence != .none,
                           predicted.estimatedSeconds > 0 {
                     Text("· ETA: ~\(Self.formatDuration(predicted.estimatedSeconds))")
+                } else if !activity.isAwaitingPasscode && !activity.isFinalizing && !isStalled && !isQuiet {
+                    Text("· Calculating ETA…")
+                        .foregroundStyle(.tertiary)
                 }
             }
             .font(.system(size: 10))
@@ -1121,21 +1124,20 @@ struct BackupRow: View {
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     if let activity, isActive {
-                        let startStr = activity.startTime.contextualClockString()
-                        Text(startStr.contains(" ") ? "Started \(startStr)" : "Started at \(startStr)")
+                        Text(activity.activeTimelineDescription)
                     } else {
                         Text(backup.statusTimestampDescription)
                     }
-                    Text("-")
+                    Text("·")
                     if backup.sizeResolved {
                         Text(backup.sizeString)
                     } else {
                         Label("Calculating...", systemImage: "clock")
                     }
                     if backup.appCount > 0 {
-                        Text("-")
+                        Text("·")
                         Text("\(backup.appCount) apps")
                     }
                 }

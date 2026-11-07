@@ -198,8 +198,14 @@ def test_self_contained_per_backup_progress_and_coherent_eta(root: Path) -> None
     list_view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
     assert_contains(ext, "func contextualClockString(", "Date must format contextual start/finish clock strings with Tomorrow/date awareness")
     assert_contains(ext, "fts_open(", "FileManager.directorySize must use fast POSIX fts_open traversal")
+    assert_contains(ext, "if totalBucketFiles > 15_000, !bucketPaths.isEmpty {", "FileManager.directorySize must use stratified 16-bucket sampling for large backups (>15k files)")
     assert_contains(info, "var statusTimestampDescription: String", "BackupInfo must provide explicit state-prefixed timestamp descriptions")
+    assert_contains(vm, "var activeTimelineDescription: String", "BackupActivity must expose activeTimelineDescription with start date and elapsed time")
+    assert_contains(vm, "var transferAnchorSample:", "BackupActivity must retain transferAnchorSample so ETA never blanks out between integer ticks")
+    assert_contains(vm, "var lastComputedEtaSeconds:", "BackupActivity must retain lastComputedEtaSeconds for smooth countdown between ticks")
+    assert_contains(list_view, "activity.activeTimelineDescription", "BackupRow must render activeTimelineDescription when active")
     assert_contains(list_view, "backup.statusTimestampDescription", "BackupRow must render explicit state-prefixed timestamps when idle and Started time when active")
+    assert_contains(list_view, '"· Calculating ETA…"', "BackupRow must show Calculating ETA… while initial transfer velocity is being measured")
 
 
 

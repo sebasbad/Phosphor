@@ -108,6 +108,13 @@ final class BackupViewModel: ObservableObject {
         /// Rolling samples of `(Date, sessionFraction)` once active transfer begins (`sessionFraction > 0.01`),
         /// used to compute a coherent ETA unaffected by pre-transfer manifest reconciliation dead time.
         var transferFractionSamples: [(date: Date, fraction: Double)] = []
+        /// First post-reconciliation transfer sample (`sessionFraction > 0.005`), retained for the entire session
+        /// so ETA never blanks out when integer percentage steps take several minutes on 200+ GB backups.
+        var transferAnchorSample: (date: Date, fraction: Double)?
+        /// Last computed remaining ETA seconds and the timestamp when it was computed, allowing smooth
+        /// countdown between integer percentage updates without flickering to nil.
+        var lastComputedEtaSeconds: TimeInterval?
+        var lastComputedEtaAt: Date?
         var isAwaitingPasscode: Bool = false
         var hasReceivedTransferProgress: Bool = false
         var hasNotifiedPasscodePrompt: Bool = false
@@ -334,6 +341,13 @@ final class BackupViewModel: ObservableObject {
         /// Consolidated ETA string including remaining duration and estimated wall-clock finish time
         /// (with date when crossing midnight or >24h, e.g. "2h 24m (~22:34)" or "14h 10m (~Tomorrow at 10:25)").
         var consolidatedETADescription: String? {
+            if let baseSecs = lastComputedEtaSeconds, let baseAt = lastComputedEtaAt, baseSecs > 0 {
+                let elapsedSinceCalc = max(0, Date().timeIntervalSince(baseAt))
+                let liveSecs = max(30, baseSecs - elapsedSinceCalc)
+                let durationStr = BackupViewModel.formatEtaSeconds(liveSecs)
+                let finish = Date().addingTimeInterval(liveSecs)
+                return "\(durationStr) (~\(finish.contextualClockString()))"
+            }
             if let eta, !eta.isEmpty, let secs = BackupViewModel.parseEtaToSeconds(eta), secs > 0 {
                 let finish = Date().addingTimeInterval(secs)
                 return "\(eta) (~\(finish.contextualClockString()))"
@@ -345,6 +359,26 @@ final class BackupViewModel: ObservableObject {
                 return "~\(durationStr) (~\(finish.contextualClockString()))"
             }
             return nil
+        }
+
+        /// Formatted elapsed time since this backup job started (e.g. "21m elapsed", "1h 12m elapsed").
+        var elapsedTimeDescription: String {
+            let secs = max(0, Int(Date().timeIntervalSince(startTime)))
+            if secs < 60 {
+                return "\(max(1, secs))s elapsed"
+            } else if secs < 3600 {
+                return "\(secs / 60)m elapsed"
+            } else {
+                let h = secs / 3600
+                let m = (secs % 3600) / 60
+                return m > 0 ? "\(h)h \(m)m elapsed" : "\(h)h elapsed"
+            }
+        }
+
+        /// Explicit start time + elapsed duration for the active backup subtitle row.
+        var activeTimelineDescription: String {
+            let startStr = startTime.contextualClockString(includeTodayPrefix: true)
+            return "Started \(startStr) (\(elapsedTimeDescription))"
         }
     }
 
@@ -885,6 +919,9 @@ final class BackupViewModel: ObservableObject {
             $0.resumeBytesBaseline = nil
             $0.targetDeviceUsedBytes = nil
             $0.transferFractionSamples = []
+            $0.transferAnchorSample = nil
+            $0.lastComputedEtaSeconds = nil
+            $0.lastComputedEtaAt = nil
             $0.eta = nil
             $0.progressText = isResume ? "Resuming..." : "Preparing..."
             $0.lastProgressUpdate = Date()
@@ -940,6 +977,18 @@ final class BackupViewModel: ObservableObject {
                         baselineFraction = max(baselineFraction, 0.05)
                     } else {
                         baselineFraction = 0.0
+                    }
+                }
+                // Immediately hydrate the active backup row's on-disk size from the fast incompleteBackupStats
+                // so the row never sits on "Calculating..." while the external drive is busy resuming.
+                if let resumeBytesCount, resumeBytesCount > 0 {
+                    let backupPath = BackupManager.backupPath(for: udid)
+                    if let idx = self.backups.firstIndex(where: { !$0.isArchivedSnapshot && ($0.udid == udid || $0.id == udid) }) {
+                        if !self.backups[idx].sizeResolved || self.backups[idx].size == 0 {
+                            self.resolvedSizesByPath[backupPath] = (resumeBytesCount, self.backups[idx].lastBackupDate)
+                            self.backups[idx] = self.backups[idx].withSize(resumeBytesCount)
+                            self.backupManager.backups = self.backups
+                        }
                     }
                 }
                 self.updateActivity(udid: udid) {
@@ -1330,8 +1379,8 @@ final class BackupViewModel: ObservableObject {
                 if let speed = details.speed { activity.speed = speed }
                 if let t = details.transferred { transferredBytes = Self.parseByteCount(t) }
                 if let t = details.total { totalBytes = Self.parseByteCount(t) }
-                activity.eta = Self.computeCoherentETA(
-                    for: activity,
+                Self.updateCoherentETA(
+                    on: &activity,
                     rawTqdmEta: details.eta,
                     speedBytesPerSec: activity.speed.flatMap(Self.parseSpeedToBytesPerSecond),
                     transferredBytes: transferredBytes,
@@ -1351,8 +1400,8 @@ final class BackupViewModel: ObservableObject {
                     activity.progressFraction = next
                     Self.recordTransferSample(on: &activity, sessionFraction: next)
                 }
-                activity.eta = Self.computeCoherentETA(
-                    for: activity,
+                Self.updateCoherentETA(
+                    on: &activity,
                     rawTqdmEta: nil,
                     speedBytesPerSec: activity.speed.flatMap(Self.parseSpeedToBytesPerSecond),
                     transferredBytes: transferredBytes,
@@ -1366,8 +1415,8 @@ final class BackupViewModel: ObservableObject {
                 let next = max(current, manager.backupPercent)
                 activity.progressFraction = next
                 Self.recordTransferSample(on: &activity, sessionFraction: next)
-                activity.eta = Self.computeCoherentETA(
-                    for: activity,
+                Self.updateCoherentETA(
+                    on: &activity,
                     rawTqdmEta: nil,
                     speedBytesPerSec: activity.speed.flatMap(Self.parseSpeedToBytesPerSecond),
                     transferredBytes: transferredBytes,
@@ -1494,23 +1543,57 @@ final class BackupViewModel: ObservableObject {
         return "\(s)s"
     }
 
-    /// Records a timestamped sample of `sessionFraction` once active payload transfer begins (`> 0.01`),
-    /// pruning samples older than 180 seconds so velocity reflects current transfer speed rather than
-    /// pre-transfer manifest reconciliation dead time.
+    /// Records a timestamped sample of `sessionFraction` once active payload transfer begins (`> 0.005`),
+    /// retaining `transferAnchorSample` and a 30-minute rolling window so velocity remains stable across
+    /// multi-minute integer percentage steps on 200+ GB backups.
     private static func recordTransferSample(on activity: inout BackupActivity, sessionFraction: Double) {
         guard sessionFraction > 0.005 else { return }
         let now = Date()
+        if activity.transferAnchorSample == nil {
+            activity.transferAnchorSample = (now, sessionFraction)
+        }
         if let last = activity.transferFractionSamples.last {
-            // Only append when fraction advances or at least 2s elapsed
             if sessionFraction > last.fraction || now.timeIntervalSince(last.date) >= 2.0 {
                 activity.transferFractionSamples.append((now, sessionFraction))
             }
         } else {
             activity.transferFractionSamples.append((now, sessionFraction))
         }
-        let cutoff = now.addingTimeInterval(-180)
-        if activity.transferFractionSamples.count > 2 {
+        // Keep 30 minutes of samples (a 1% step on a 250 GB backup can take 3-5 minutes)
+        let cutoff = now.addingTimeInterval(-1800)
+        if activity.transferFractionSamples.count > 4 {
             activity.transferFractionSamples.removeAll { $0.date < cutoff }
+        }
+    }
+
+    private static func updateCoherentETA(
+        on activity: inout BackupActivity,
+        rawTqdmEta: String?,
+        speedBytesPerSec: Double?,
+        transferredBytes: Int64?,
+        totalBytes: Int64?
+    ) {
+        if let computed = computeCoherentETA(
+            for: activity,
+            rawTqdmEta: rawTqdmEta,
+            speedBytesPerSec: speedBytesPerSec,
+            transferredBytes: transferredBytes,
+            totalBytes: totalBytes
+        ) {
+            activity.eta = computed
+            if let secs = parseEtaToSeconds(computed), secs > 0 {
+                activity.lastComputedEtaSeconds = secs
+                activity.lastComputedEtaAt = Date()
+            }
+        } else if let prevSecs = activity.lastComputedEtaSeconds,
+                  let prevAt = activity.lastComputedEtaAt,
+                  (activity.progressFraction ?? 0) < 0.995 {
+            // Never blank out an already-established ETA to nil between integer percentage ticks
+            let elapsed = max(0, Date().timeIntervalSince(prevAt))
+            let remaining = max(30, prevSecs - elapsed)
+            activity.eta = formatEtaSeconds(remaining)
+        } else {
+            activity.eta = nil
         }
     }
 
@@ -1546,17 +1629,24 @@ final class BackupViewModel: ObservableObject {
             }
         }
 
-        // 2. Compute from rolling active session-fraction velocity (ignores pre-transfer dead time at 0-1%)
-        if let first = activity.transferFractionSamples.first,
-           let last = activity.transferFractionSamples.last {
-            let dt = last.date.timeIntervalSince(first.date)
-            let df = last.fraction - first.fraction
-            if dt >= 4.0, df >= 0.003 {
-                let ratePerSec = df / dt
-                let remainingFraction = max(0.0, 1.0 - sessionFraction)
-                let estSeconds = remainingFraction / ratePerSec
-                if estSeconds > 0, estSeconds < 86_400 * 3 {
-                    return formatEtaSeconds(estSeconds)
+        // 2. Compute from rolling active session-fraction velocity (or session anchor if rolling window has df == 0)
+        if let last = activity.transferFractionSamples.last {
+            let referenceSample: (date: Date, fraction: Double)? = {
+                if let first = activity.transferFractionSamples.first, (last.fraction - first.fraction) >= 0.003 {
+                    return first
+                }
+                return activity.transferAnchorSample
+            }()
+            if let ref = referenceSample {
+                let dt = last.date.timeIntervalSince(ref.date)
+                let df = last.fraction - ref.fraction
+                if dt >= 4.0, df >= 0.003 {
+                    let ratePerSec = df / dt
+                    let remainingFraction = max(0.0, 1.0 - sessionFraction)
+                    let estSeconds = remainingFraction / ratePerSec
+                    if estSeconds > 0, estSeconds < 86_400 * 3 {
+                        return formatEtaSeconds(estSeconds)
+                    }
                 }
             }
         }
