@@ -208,7 +208,10 @@ def test_self_contained_per_backup_progress_and_coherent_eta(root: Path) -> None
     assert_contains(list_view, "activity.activeTimelineDescription", "BackupRow must render activeTimelineDescription when active")
     assert_contains(list_view, "backup.statusTimestampDescription", "BackupRow must render explicit state-prefixed timestamps when idle and Started time when active")
     assert_contains(list_view, '"· Calculating ETA…"', "BackupRow must show Calculating ETA… while initial transfer velocity is being measured")
-    assert_contains(vm, "guard !isTransitioning, tickCount % 3 == 1 else { continue }", "Liveness monitor must republish 1s UI ticks before any disk I/O and skip disk scans while pausing")
+    assert_contains(vm, "guard !isTransitioning, tickCount % 5 == 1 else { continue }", "Liveness monitor must republish 1s UI ticks before any disk I/O and skip disk scans while pausing")
+    assert_contains(vm, "let shouldSampleDomain = (tickCount % 30 == 1)", "Liveness monitor must throttle SQLite Manifest.db domain sampling so it does not contend with backup disk writes")
+    manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    assert_contains(manager, "patchManifest: full && (onlyRegex != nil && !onlyRegex!.isEmpty)", "patchManifest must only be enabled on full backups because pymobiledevice3 forces full=True when patch_manifest=True")
 
 
 

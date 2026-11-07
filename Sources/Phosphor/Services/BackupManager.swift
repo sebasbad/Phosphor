@@ -928,7 +928,11 @@ final class BackupManager: ObservableObject {
                 full: full,
                 preferNetwork: preferNetwork,
                 onlyRegex: onlyRegex,
-                patchManifest: onlyRegex != nil && !onlyRegex!.isEmpty,
+                // IMPORTANT: pymobiledevice3's `_should_do_full_backup` forces `full = True` whenever
+                // `patch_manifest = True` (`return full or patch_manifest or ...`), which wipes out
+                // incremental/resume delta state! Only pass `patchManifest: true` on full backups (`full == true`),
+                // so resuming or incremental backups keep `--only-regex` filtering without resetting to a full backup.
+                patchManifest: full && (onlyRegex != nil && !onlyRegex!.isEmpty),
                 timeout: Self.streamingBackupTimeout,
                 onOutput: { [weak self] output in
                     let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
