@@ -345,8 +345,8 @@ extension BackupManager {
             if let known = knownDirectorySize, known > 0 {
                 totalBytes = known
             } else if !bucketPaths.isEmpty {
-                // Sample up to 16 evenly spaced buckets (up to 250 files each) for an accurate,
-                // self-contained byte estimate without blocking on 400k+ stat() calls.
+                // Sample up to 16 evenly spaced buckets (up to 25 files each via opendir/readdir)
+                // without enumerating entire 1,800-file bucket directories over USB.
                 let sampleCount = min(16, bucketPaths.count)
                 var sampleFiles = 0
                 var sampleBytes: UInt64 = 0
@@ -354,15 +354,25 @@ extension BackupManager {
                     if Task.isCancelled { return nil }
                     let idx = (i * bucketPaths.count) / sampleCount
                     let subPath = bucketPaths[idx]
-                    if let files = try? fm.contentsOfDirectory(atPath: subPath) {
-                        for f in files.prefix(250) {
-                            let fp = (subPath as NSString).appendingPathComponent(f)
-                            var fst = stat()
-                            if stat(fp, &fst) == 0, (fst.st_mode & S_IFMT) == S_IFREG {
-                                sampleFiles += 1
-                                sampleBytes += UInt64(max(0, fst.st_size))
+                    if let dp = opendir(subPath) {
+                        var inBucket = 0
+                        while let ep = readdir(dp), inBucket < 25 {
+                            if ep.pointee.d_type == DT_REG {
+                                let name = withUnsafePointer(to: ep.pointee.d_name) {
+                                    $0.withMemoryRebound(to: CChar.self, capacity: Int(ep.pointee.d_namlen) + 1) {
+                                        String(cString: $0)
+                                    }
+                                }
+                                let fp = (subPath as NSString).appendingPathComponent(name)
+                                var fst = stat()
+                                if stat(fp, &fst) == 0, (fst.st_mode & S_IFMT) == S_IFREG {
+                                    sampleFiles += 1
+                                    inBucket += 1
+                                    sampleBytes += UInt64(max(0, fst.st_size))
+                                }
                             }
                         }
+                        closedir(dp)
                     }
                 }
                 if sampleFiles > 0 {
@@ -453,17 +463,25 @@ extension BackupManager {
                 }
             }
 
-            // APFS only updates a directory's mtime when a directory entry is added or removed,
-            // NOT when bytes are appended to an already-open multi-gigabyte file inside that bucket.
-            // Scan the 3 most recently touched buckets to catch active in-flight file writes.
-            recentBuckets.sort { $0.mtime > $1.mtime }
-            for bucket in recentBuckets.prefix(3) {
-                if Task.isCancelled { return newestDate }
-                guard let files = try? fm.contentsOfDirectory(atPath: bucket.path) else { continue }
-                for file in files {
+            // APFS updates a bucket directory's mtime whenever a file is created or renamed into it,
+            // and Manifest.db-wal / Status.plist update on metadata writes. For large in-flight files,
+            // sample at most 20 entries in the single most recently modified bucket so liveness checks
+            // finish in <2ms instead of stalling external USB drives on 18,000 stat() calls.
+            if let newestBucket = recentBuckets.max(by: { $0.mtime < $1.mtime }),
+               let dp = opendir(newestBucket.path) {
+                defer { closedir(dp) }
+                var checked = 0
+                while let ep = readdir(dp), checked < 20 {
                     if Task.isCancelled { return newestDate }
+                    guard ep.pointee.d_type == DT_REG else { continue }
+                    let name = withUnsafePointer(to: ep.pointee.d_name) {
+                        $0.withMemoryRebound(to: CChar.self, capacity: Int(ep.pointee.d_namlen) + 1) {
+                            String(cString: $0)
+                        }
+                    }
+                    checked += 1
                     var fst = stat()
-                    let filePath = (bucket.path as NSString).appendingPathComponent(file)
+                    let filePath = (newestBucket.path as NSString).appendingPathComponent(name)
                     if stat(filePath, &fst) == 0 {
                         let fmod = Date(timeIntervalSince1970: TimeInterval(fst.st_mtimespec.tv_sec))
                         if newestDate == nil || fmod > newestDate! {
@@ -489,26 +507,43 @@ extension BackupManager {
         let targetDir = fm.fileExists(atPath: snapshotPath, isDirectory: &isDir) && isDir.boolValue ? snapshotPath : path
 
         guard let subdirs = try? fm.contentsOfDirectory(atPath: targetDir) else { return nil }
-        var newestFileID: String?
-        var newestDate: Date?
+        var newestBucketPath: String?
+        var newestBucketMtime: TimeInterval = 0
 
-        // Check a bounded sample of recent entries without doing an exhaustive recursive walk
-        var sampledSubdirs = 0
         for sub in subdirs where sub.count == 2 {
             if Task.isCancelled { return nil }
-            sampledSubdirs += 1
-            if sampledSubdirs > 10 { break }
             let subPath = (targetDir as NSString).appendingPathComponent(sub)
-            guard let files = try? fm.contentsOfDirectory(atPath: subPath) else { continue }
-            for file in files {
-                if Task.isCancelled { return nil }
-                let filePath = (subPath as NSString).appendingPathComponent(file)
-                if let attrs = try? fm.attributesOfItem(atPath: filePath),
-                   let mod = attrs[.modificationDate] as? Date {
-                    if newestDate == nil || mod > newestDate! {
-                        newestDate = mod
-                        newestFileID = file
-                    }
+            var st = stat()
+            if stat(subPath, &st) == 0, (st.st_mode & S_IFMT) == S_IFDIR {
+                let mtime = TimeInterval(st.st_mtimespec.tv_sec)
+                if mtime >= newestBucketMtime {
+                    newestBucketMtime = mtime
+                    newestBucketPath = subPath
+                }
+            }
+        }
+
+        guard let bucketPath = newestBucketPath, let dp = opendir(bucketPath) else { return nil }
+        defer { closedir(dp) }
+        var newestFileID: String?
+        var newestDate: Date?
+        var checked = 0
+        while let ep = readdir(dp), checked < 25 {
+            if Task.isCancelled { return nil }
+            guard ep.pointee.d_type == DT_REG else { continue }
+            let name = withUnsafePointer(to: ep.pointee.d_name) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(ep.pointee.d_namlen) + 1) {
+                    String(cString: $0)
+                }
+            }
+            checked += 1
+            let filePath = (bucketPath as NSString).appendingPathComponent(name)
+            var fst = stat()
+            if stat(filePath, &fst) == 0 {
+                let mod = Date(timeIntervalSince1970: TimeInterval(fst.st_mtimespec.tv_sec))
+                if newestDate == nil || mod > newestDate! {
+                    newestDate = mod
+                    newestFileID = name
                 }
             }
         }
@@ -533,7 +568,7 @@ extension BackupManager {
     /// - Performs SQLite WAL checkpoint and removes stale lock files (Manifest.db-wal, Manifest.db-shm).
     /// - Removes transient staging or temp files.
     @discardableResult
-    static func sanitizeIncompleteBackup(at path: String) -> SanitizeResult {
+    nonisolated static func sanitizeIncompleteBackup(at path: String) -> SanitizeResult {
         let fm = FileManager.default
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else {

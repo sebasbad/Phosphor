@@ -175,15 +175,25 @@ extension FileManager {
                 if Task.isCancelled { return 0 }
                 let idx = (i * bucketPaths.count) / sampleCount
                 let subPath = bucketPaths[idx]
-                if let files = try? fm.contentsOfDirectory(atPath: subPath) {
-                    for f in files.prefix(250) {
-                        let fp = (subPath as NSString).appendingPathComponent(f)
-                        var fst = stat()
-                        if stat(fp, &fst) == 0, (fst.st_mode & S_IFMT) == S_IFREG {
-                            sampleFiles += 1
-                            sampleBytes += UInt64(max(0, fst.st_size))
+                if let dp = opendir(subPath) {
+                    var inBucket = 0
+                    while let ep = readdir(dp), inBucket < 25 {
+                        if ep.pointee.d_type == DT_REG {
+                            let name = withUnsafePointer(to: ep.pointee.d_name) {
+                                $0.withMemoryRebound(to: CChar.self, capacity: Int(ep.pointee.d_namlen) + 1) {
+                                    String(cString: $0)
+                                }
+                            }
+                            let fp = (subPath as NSString).appendingPathComponent(name)
+                            var fst = stat()
+                            if stat(fp, &fst) == 0, (fst.st_mode & S_IFMT) == S_IFREG {
+                                sampleFiles += 1
+                                inBucket += 1
+                                sampleBytes += UInt64(max(0, fst.st_size))
+                            }
                         }
                     }
+                    closedir(dp)
                 }
             }
             if sampleFiles > 0 {

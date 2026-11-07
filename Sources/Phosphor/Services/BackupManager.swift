@@ -1210,12 +1210,14 @@ final class BackupManager: ObservableObject {
         }
 
         let targetPath = Self.backupPath(for: udid, in: backupRoot)
-        // Perform pre-resume sanitization to remove 0-byte/corrupted plists and checkpoint SQLite WAL.
-        let sanitizeResult = Self.sanitizeIncompleteBackup(at: targetPath)
+        // Perform pre-resume sanitization and metadata guard staging off the MainActor
+        // so SQLite WAL checkpointing and plist copies on external USB drives never block UI rendering or 1s timers.
+        let sanitizeResult = await Task.detached(priority: .utility) {
+            let res = Self.sanitizeIncompleteBackup(at: targetPath)
+            Self.stageMetadataGuard(for: udid, in: backupRoot)
+            return res
+        }.value
         onProgress("Sanitizing: \(sanitizeResult.filesScanned) scanned, \(sanitizeResult.filesCleaned) cleaned, wal: \(sanitizeResult.walCheckpointed)")
-
-        // Snapshot valid existing metadata before pymobiledevice3 / idevicebackup2 mutates the folder
-        Self.stageMetadataGuard(for: udid, in: backupRoot)
 
         if operationWasCancelled(operationID) {
             Self.restoreMetadataGuardIfNeeded(for: udid, in: backupRoot)
