@@ -298,8 +298,8 @@ extension BackupManager {
                 if Task.isCancelled { return nil }
                 let subPath = (dir as NSString).appendingPathComponent(sub)
                 var st = stat()
-                if stat(subPath, &st) == 0, (st.st_mode & S_IFMT) == S_IFDIR {
-                    let bucketFiles = max(0, Int(st.st_nlink) - 2)
+                let bucketFiles = FileManager.fastDirectoryEntryCount(atPath: subPath, statBuf: &st)
+                if (st.st_mode & S_IFMT) == S_IFDIR {
                     if bucketFiles > 0 {
                         count += bucketFiles
                         bucketPaths.append(subPath)

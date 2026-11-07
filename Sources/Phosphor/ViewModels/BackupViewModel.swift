@@ -145,6 +145,9 @@ final class BackupViewModel: ObservableObject {
         var sanitizationWalCheckpointed: Bool?
         var fallbackReason: String?
         var startTime: Date = Date()
+        /// Updated on every 1-second liveness tick so SwiftUI sees a value mutation on `BackupActivity`
+        /// and re-renders elapsed time, transition countdowns, and live ETA every second.
+        var currentTick: Date = Date()
         var terminalPhaseDetail: PhaseDetail?
         var currentDomain: String?
 
@@ -203,18 +206,18 @@ final class BackupViewModel: ObservableObject {
         var isStalled: Bool {
             guard transition == nil else { return false }
             guard case .running = state else { return false }
-            return Date().timeIntervalSince(lastProgressUpdate) > 300 // 5 minutes without progress
+            return currentTick.timeIntervalSince(lastProgressUpdate) > 300 // 5 minutes without progress
         }
 
         var transitionElapsedSeconds: Int? {
             guard let transitionStartTime else { return nil }
-            return max(0, Int(Date().timeIntervalSince(transitionStartTime)))
+            return max(0, Int(currentTick.timeIntervalSince(transitionStartTime)))
         }
 
         var isQuiet: Bool {
             guard transition == nil else { return false }
             guard case .running = state else { return false }
-            let interval = Date().timeIntervalSince(lastProgressUpdate)
+            let interval = currentTick.timeIntervalSince(lastProgressUpdate)
             return interval > 30 && interval <= 300 // 30 seconds quiet, not yet stalled
         }
 
@@ -342,36 +345,46 @@ final class BackupViewModel: ObservableObject {
         /// (with date when crossing midnight or >24h, e.g. "2h 24m (~22:34)" or "14h 10m (~Tomorrow at 10:25)").
         var consolidatedETADescription: String? {
             if let baseSecs = lastComputedEtaSeconds, let baseAt = lastComputedEtaAt, baseSecs > 0 {
-                let elapsedSinceCalc = max(0, Date().timeIntervalSince(baseAt))
+                let elapsedSinceCalc = max(0, currentTick.timeIntervalSince(baseAt))
                 let liveSecs = max(30, baseSecs - elapsedSinceCalc)
                 let durationStr = BackupViewModel.formatEtaSeconds(liveSecs)
-                let finish = Date().addingTimeInterval(liveSecs)
+                let finish = currentTick.addingTimeInterval(liveSecs)
                 return "\(durationStr) (~\(finish.contextualClockString()))"
             }
             if let eta, !eta.isEmpty, let secs = BackupViewModel.parseEtaToSeconds(eta), secs > 0 {
-                let finish = Date().addingTimeInterval(secs)
+                let finish = currentTick.addingTimeInterval(secs)
                 return "\(eta) (~\(finish.contextualClockString()))"
             }
             if let predicted = predictiveETA, predicted.confidence != .none, predicted.estimatedSeconds > 0 {
                 let secs = predicted.estimatedSeconds
                 let durationStr = BackupViewModel.formatEtaSeconds(secs)
-                let finish = Date().addingTimeInterval(secs)
+                let finish = currentTick.addingTimeInterval(secs)
                 return "~\(durationStr) (~\(finish.contextualClockString()))"
             }
             return nil
         }
 
-        /// Formatted elapsed time since this backup job started (e.g. "21m elapsed", "1h 12m elapsed").
+        /// Formatted elapsed time since this backup job started:
+        /// - `< 60s`: `"24s elapsed"` (ticks every second)
+        /// - `1m ..< 60m`: `"4m 12s elapsed"` (ticks every second during the first hour)
+        /// - `1h ..< 24h`: `"2h 14m elapsed"`
+        /// - `>= 24h`: `"1d 3h elapsed"`
         var elapsedTimeDescription: String {
-            let secs = max(0, Int(Date().timeIntervalSince(startTime)))
+            let secs = max(0, Int(currentTick.timeIntervalSince(startTime)))
             if secs < 60 {
                 return "\(max(1, secs))s elapsed"
             } else if secs < 3600 {
-                return "\(secs / 60)m elapsed"
-            } else {
+                let m = secs / 60
+                let s = secs % 60
+                return "\(m)m \(s)s elapsed"
+            } else if secs < 86400 {
                 let h = secs / 3600
                 let m = (secs % 3600) / 60
                 return m > 0 ? "\(h)h \(m)m elapsed" : "\(h)h elapsed"
+            } else {
+                let d = secs / 86400
+                let h = (secs % 86400) / 3600
+                return h > 0 ? "\(d)d \(h)h elapsed" : "\(d)d elapsed"
             }
         }
 
@@ -1179,6 +1192,7 @@ final class BackupViewModel: ObservableObject {
                 var isTransitioning = false
                 self.updateActivity(udid: udid) {
                     $0.processAlive = true
+                    $0.currentTick = Date()
                     isTransitioning = ($0.transition != nil)
                 }
                 self.refreshLegacyProgressState()
