@@ -72,6 +72,17 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
         lastBackupDate?.relativeString ?? "Unknown"
     }
 
+    /// Clear, state-specific timestamp description for idle backup rows.
+    var statusTimestampDescription: String {
+        guard let lastBackupDate else { return "Unknown date" }
+        let prefix: String = switch healthState {
+        case .complete: "Completed"
+        case .paused: "Last saved"
+        case .broken: "Interrupted"
+        }
+        return "\(prefix) \(lastBackupDate.shortString) (\(lastBackupDate.relativeString))"
+    }
+
     var sizeString: String {
         size.formattedFileSize
     }
@@ -164,15 +175,34 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
         let health = computeHealthState(at: path, snapshotState: status?.snapshotState)
 
         let manifestDbPath = (path as NSString).appendingPathComponent("Manifest.db")
-        let manifestDbDate = (try? FileManager.default.attributesOfItem(atPath: manifestDbPath)[.modificationDate]) as? Date
+        let snapshotManifestDbPath = (path as NSString).appendingPathComponent("Snapshot/Manifest.db")
+        let statusPlistPath = (path as NSString).appendingPathComponent("Status.plist")
+        let infoPlistPath = (path as NSString).appendingPathComponent("Info.plist")
+        let fm = FileManager.default
+        let diskModDate: Date? = [manifestDbPath, snapshotManifestDbPath, statusPlistPath, infoPlistPath]
+            .compactMap { (try? fm.attributesOfItem(atPath: $0)[.modificationDate]) as? Date }
+            .max()
+        let now = Date()
+        let sanitizePlistDate: (Date?) -> Date? = { candidate in
+            guard let candidate else { return nil }
+            // If a plist date was serialized with a future timezone offset (e.g. +1h ahead of local wall clock),
+            // prefer the actual filesystem modification date on disk or clamp to `now`.
+            if candidate > now.addingTimeInterval(60) {
+                if let diskModDate, diskModDate <= now.addingTimeInterval(60) {
+                    return diskModDate
+                }
+                return now
+            }
+            return candidate
+        }
         let resolvedDate: Date? = {
-            if let infoDate = info.lastBackupDate { return infoDate }
+            if let infoDate = sanitizePlistDate(info.lastBackupDate) { return infoDate }
             // If Status.plist is a pre-handshake "BackupState = new" stub from an aborted run,
             // prefer Manifest.db's modification date over the aborted attempt timestamp.
-            if status?.backupState.lowercased() == "new", let manifestDbDate {
-                return manifestDbDate
+            if status?.backupState.lowercased() == "new", let diskModDate {
+                return diskModDate
             }
-            return status?.date ?? manifestDbDate
+            return sanitizePlistDate(status?.date) ?? diskModDate
         }()
 
         return BackupInfo(
