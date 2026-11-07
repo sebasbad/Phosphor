@@ -65,6 +65,12 @@ final class BackupManager: ObservableObject {
     private static var operationRegistry = BackupOperationRegistry()
     private var activeProcess: Shell.ManagedProcess?
 
+    /// Total bytes written to disk by the currently active backup subprocess (`proc_pid_rusage`),
+    /// allowing 1-second live throughput, on-disk size, and byte-based ETA accounting with zero disk contention.
+    var activeProcessBytesWritten: UInt64 {
+        activeProcess?.diskBytesWritten ?? 0
+    }
+
     static func activeProcessRunning(for udid: String) -> Bool {
         operationRegistry.isRunning(udid: udid)
     }
