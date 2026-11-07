@@ -553,6 +553,30 @@ enum PyMobileDevice {
         return result.output.parseKeyValuePairs()
     }
 
+    /// Get disk usage info (`com.apple.disk_usage` domain: `TotalDiskCapacity`, `AmountDataAvailable`, `TotalDataCapacity`, etc.).
+    static func diskUsage(udid: String? = nil) async -> [String: String] {
+        var args = ["lockdown", "info", "--domain", "com.apple.disk_usage"]
+        if let udid { args += ["--udid", udid] }
+
+        let result = await runAsync(args, timeout: 10)
+        guard result.succeeded else { return [:] }
+
+        if let data = result.output.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            var dict: [String: String] = [:]
+            for (key, value) in json {
+                if let str = value as? String {
+                    dict[key] = str
+                } else if let num = value as? NSNumber {
+                    dict[key] = "\(num)"
+                }
+            }
+            return dict
+        }
+
+        return result.output.parseKeyValuePairs()
+    }
+
     /// Get device name.
     static func deviceName(udid: String? = nil) async -> String? {
         var args = ["lockdown", "device-name"]
