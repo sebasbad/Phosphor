@@ -1214,12 +1214,15 @@ final class BackupViewModel: ObservableObject {
                 self.refreshLegacyProgressState()
 
                 // Skip lsof / external USB directory scanning while pausing/restarting so teardown
-                // never contends with disk I/O, and throttle disk scans to every 3 seconds while running.
-                guard !isTransitioning, tickCount % 3 == 1 else { continue }
+                // never contends with disk I/O, and throttle disk scans to every 5 seconds while running.
+                // Throttle expensive SQLite Manifest.db domain lookups to once every 30 seconds so
+                // reading a 250+ MB Manifest.db never competes with pymobiledevice3 for USB disk writes.
+                guard !isTransitioning, tickCount % 5 == 1 else { continue }
+                let shouldSampleDomain = (tickCount % 30 == 1)
 
                 let (domain, diskDate) = await Task.detached(priority: .utility) {
                     (
-                        BackupManager.sampleActiveDomain(for: udid),
+                        shouldSampleDomain ? BackupManager.sampleActiveDomain(for: udid) : nil,
                         BackupManager.latestBackupDiskActivityDate(for: udid)
                     )
                 }.value
@@ -1585,8 +1588,8 @@ final class BackupViewModel: ObservableObject {
     }
 
     /// Records a timestamped sample of `sessionFraction` once active payload transfer begins (`> 0.005`),
-    /// retaining `transferAnchorSample` and a 30-minute rolling window so velocity remains stable across
-    /// multi-minute integer percentage steps on 200+ GB backups.
+    /// retaining `transferAnchorSample` and a 30-minute rolling window of distinct percentage step transitions
+    /// so velocity remains stable across multi-minute integer percentage steps on 200+ GB backups.
     private static func recordTransferSample(on activity: inout BackupActivity, sessionFraction: Double) {
         guard sessionFraction > 0.005 else { return }
         let now = Date()
@@ -1594,16 +1597,26 @@ final class BackupViewModel: ObservableObject {
             activity.transferAnchorSample = (now, sessionFraction)
         }
         if let last = activity.transferFractionSamples.last {
-            if sessionFraction > last.fraction || now.timeIntervalSince(last.date) >= 2.0 {
+            // Record a new sample when the percentage actually advances, or update the anchor if we were still at the first value.
+            // Recording only on percentage transitions prevents 900 identical-fraction samples from pushing out the previous
+            // percentage tick when a single 1% step takes >15 minutes on a 1 TB backup.
+            if sessionFraction > last.fraction + 0.0005 {
                 activity.transferFractionSamples.append((now, sessionFraction))
+            } else if activity.transferFractionSamples.count == 1 {
+                // Keep the initial baseline timestamp fresh until the first real percentage advance arrives
+                activity.transferFractionSamples[0] = (now, sessionFraction)
+                activity.transferAnchorSample = (now, sessionFraction)
             }
         } else {
             activity.transferFractionSamples.append((now, sessionFraction))
         }
-        // Keep 30 minutes of samples (a 1% step on a 250 GB backup can take 3-5 minutes)
-        let cutoff = now.addingTimeInterval(-1800)
-        if activity.transferFractionSamples.count > 4 {
+        // Keep up to 20 distinct percentage transition steps (within the last 2 hours)
+        let cutoff = now.addingTimeInterval(-7200)
+        if activity.transferFractionSamples.count > 3 {
             activity.transferFractionSamples.removeAll { $0.date < cutoff }
+        }
+        if activity.transferFractionSamples.count > 20 {
+            activity.transferFractionSamples.removeFirst(activity.transferFractionSamples.count - 20)
         }
     }
 
