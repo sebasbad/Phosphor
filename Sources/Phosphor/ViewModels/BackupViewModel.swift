@@ -1541,10 +1541,11 @@ final class BackupViewModel: ObservableObject {
             var parsedProgress = false
             if let details = PyMobileDevice.parseProgressDetails(from: text) {
                 parsedProgress = true
-                // Only mark passcode entry as completed when tqdm reports actual transfer progress (>0.1%) or byte speed.
-                // On resumed backups, pymobiledevice3 emits `0%| | 0/100 [00:01<?, ?it/s]` while downloading Manifest.db
-                // BEFORE the user has entered the PIN on the iPhone, so a 0% frame must NEVER dismiss `isAwaitingPasscode`.
-                if details.speed != nil || details.fraction > 0.001 {
+                // Only mark passcode entry as completed when tqdm reports actual transfer progress (>0.1%) or a real byte speed (not `it/s`).
+                // On resumed backups, pymobiledevice3 emits `0%| | 0/100 [00:01<?, 1.12it/s]` while downloading Manifest.db
+                // BEFORE the user has entered the PIN on the iPhone, so a 0% or `it/s` frame must NEVER dismiss `isAwaitingPasscode`.
+                let byteSpeed = details.speed.flatMap(Self.parseSpeedToBytesPerSecond)
+                if (byteSpeed ?? 0) > 0 || details.fraction > 0.001 {
                     activity.hasReceivedTransferProgress = true
                     activity.isAwaitingPasscode = false
                 }
@@ -1557,7 +1558,9 @@ final class BackupViewModel: ObservableObject {
                     activity.progressFraction = next
                     Self.recordTransferSample(on: &activity, sessionFraction: next)
                 }
-                if let speed = details.speed { activity.speed = speed }
+                if let speed = details.speed, !speed.lowercased().contains("it/s") {
+                    activity.speed = speed
+                }
                 if let t = details.transferred { transferredBytes = Self.parseByteCount(t) }
                 if let t = details.total { totalBytes = Self.parseByteCount(t) }
                 Self.updateCoherentETA(
