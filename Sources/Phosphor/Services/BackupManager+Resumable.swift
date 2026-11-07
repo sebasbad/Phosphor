@@ -10,14 +10,19 @@ extension BackupManager {
         for entry in entries {
             if entry.count == 2 || entry.count == 40 {
                 let subPath = (path as NSString).appendingPathComponent(entry)
-                var isDir: ObjCBool = false
-                if fm.fileExists(atPath: subPath, isDirectory: &isDir) {
-                    if isDir.boolValue {
+                var st = stat()
+                if stat(subPath, &st) == 0 {
+                    let isDir = (st.st_mode & S_IFMT) == S_IFDIR
+                    if isDir {
+                        // Fast O(1) check on APFS/HFS+: st_nlink > 2 means directory has children
+                        if st.st_nlink > 2 {
+                            return true
+                        }
                         if let enumerator = fm.enumerator(at: URL(fileURLWithPath: subPath), includingPropertiesForKeys: nil, options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]),
                            enumerator.nextObject() != nil {
                             return true
                         }
-                    } else if isNonEmptyFile(subPath) {
+                    } else if st.st_size > 0 {
                         return true
                     }
                 }
