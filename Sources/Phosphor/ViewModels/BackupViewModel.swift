@@ -1238,6 +1238,7 @@ final class BackupViewModel: ObservableObject {
                 let writtenBytes = self.backupManagers[udid]?.activeProcessBytesWritten ?? 0
                 var isTransitioning = false
                 var updatedOnDiskSize: UInt64?
+                var shouldNotifyPasscode = false
                 self.updateActivity(udid: udid) {
                     $0.processAlive = true
                     $0.currentTick = now
@@ -1245,9 +1246,15 @@ final class BackupViewModel: ObservableObject {
                     guard !isTransitioning else { return }
 
                     if writtenBytes > 0 {
-                        if writtenBytes > $0.sessionBytesWritten {
+                        let prevWritten = $0.sessionBytesWritten
+                        let prevSampleDate = $0.byteWriteSamples.last?.date
+                        if writtenBytes > prevWritten {
                             $0.lastProgressUpdate = now
-                            if now > $0.startTime.addingTimeInterval(1.0) {
+                            // Only treat kernel disk writes as post-PIN payload transfer once tqdm reports >0%
+                            // OR when writes resume after the >20s PIN/diffing pause (the initial 0% write is
+                            // just pymobiledevice3 downloading the existing Manifest.db before iOS asks for the PIN).
+                            let resumedAfterPinPause = prevSampleDate.map { now.timeIntervalSince($0) > 20.0 } ?? false
+                            if ($0.progressFraction ?? 0) > 0.001 || resumedAfterPinPause {
                                 $0.hasReceivedTransferProgress = true
                                 $0.isAwaitingPasscode = false
                             }
@@ -1257,7 +1264,7 @@ final class BackupViewModel: ObservableObject {
 
                         // Compute 15-second rolling byte write rate for live UI speed ("8.7 MB/s")
                         let liveRate = Self.computeKernelByteSpeed(for: $0, windowSeconds: 15.0, now: now)
-                        if let liveRate, liveRate > 0 {
+                        if let liveRate, liveRate > 0, $0.hasReceivedTransferProgress {
                             $0.speed = self.formatBytesPerSecond(liveRate)
                         } else if ($0.progressFraction ?? 0) <= 0.01 {
                             // Clear pre-diffing Manifest.db download speed during the PIN/diffing pause
@@ -1271,12 +1278,12 @@ final class BackupViewModel: ObservableObject {
                         Self.updateCoherentETA(
                             on: &$0,
                             rawTqdmEta: nil,
-                            speedBytesPerSec: liveRate ?? $0.speed.flatMap(Self.parseSpeedToBytesPerSecond),
+                            speedBytesPerSec: $0.hasReceivedTransferProgress ? (liveRate ?? $0.speed.flatMap(Self.parseSpeedToBytesPerSecond)) : nil,
                             transferredBytes: nil,
                             totalBytes: nil
                         )
 
-                        if let coordinator = $0.observabilityCoordinator, let liveRate, liveRate > 0 {
+                        if let coordinator = $0.observabilityCoordinator, let liveRate, liveRate > 0, $0.hasReceivedTransferProgress {
                             let baseline = $0.isResume ? ($0.resumeBytesBaseline ?? 0) : 0
                             let currentOnDisk = Int64(baseline + writtenBytes)
                             let targetTotal = $0.targetDeviceUsedBytes.map { Int64($0) }
@@ -1316,6 +1323,26 @@ final class BackupViewModel: ObservableObject {
                             updatedOnDiskSize = baseline + writtenBytes
                         }
                     }
+
+                    // Show the orange Passcode banner & alert on Attempt 1 (for both Full and Resume backups)
+                    // as soon as 3 seconds have elapsed without active payload transfer (or once initial Manifest.db
+                    // download finishes and stops writing for >= 2 seconds while waiting on the iPhone PIN screen).
+                    let idleSinceLastWrite = $0.byteWriteSamples.last.map { now.timeIntervalSince($0.date) >= 2.0 } ?? true
+                    if !$0.hasReceivedTransferProgress,
+                       ($0.progressFraction ?? 0) <= 0.001,
+                       $0.transition == nil,
+                       $0.explicitPhase != .sanitization,
+                       now.timeIntervalSince($0.startTime) >= 3.0,
+                       idleSinceLastWrite {
+                        $0.isAwaitingPasscode = true
+                        if !$0.hasNotifiedPasscodePrompt {
+                            $0.hasNotifiedPasscodePrompt = true
+                            shouldNotifyPasscode = true
+                        }
+                    }
+                }
+                if shouldNotifyPasscode {
+                    self.notifyUserDevicePasscodeRequired(for: udid)
                 }
                 if let newSize = updatedOnDiskSize {
                     let backupPath = BackupManager.backupPath(for: udid)
@@ -1343,31 +1370,31 @@ final class BackupViewModel: ObservableObject {
                     )
                 }.value
                 if Task.isCancelled { break }
-                var shouldNotifyPasscode = false
+                var shouldNotifyPasscode5s = false
                 self.updateActivity(udid: udid) {
                     $0.processAlive = true
                     if let domain { $0.currentDomain = domain }
                     if let diskDate, diskDate > $0.lastProgressUpdate {
                         $0.lastProgressUpdate = diskDate
-                        if diskDate > $0.startTime.addingTimeInterval(1.0) {
+                        if diskDate > $0.startTime.addingTimeInterval(1.0), ($0.progressFraction ?? 0) > 0.001 {
                             $0.hasReceivedTransferProgress = true
                             $0.isAwaitingPasscode = false
                         }
                     }
                     // Check if user passcode is needed without blocking MainActor on external disk I/O
                     if !$0.hasReceivedTransferProgress,
-                       !$0.isResume,
+                       ($0.progressFraction ?? 0) <= 0.001,
                        $0.transition == nil,
                        $0.explicitPhase != .sanitization,
                        Date().timeIntervalSince($0.startTime) >= 3.0 {
                         $0.isAwaitingPasscode = true
                         if !$0.hasNotifiedPasscodePrompt {
                             $0.hasNotifiedPasscodePrompt = true
-                            shouldNotifyPasscode = true
+                            shouldNotifyPasscode5s = true
                         }
                     }
                 }
-                if shouldNotifyPasscode {
+                if shouldNotifyPasscode5s {
                     self.notifyUserDevicePasscodeRequired(for: udid)
                 }
                 if !hasTriggeredMidRunRefresh, diskDate != nil {
