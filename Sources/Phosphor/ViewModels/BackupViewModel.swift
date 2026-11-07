@@ -1111,6 +1111,7 @@ final class BackupViewModel: ObservableObject {
                 $0.state = .cancelled
                 $0.progressText = "Stopped (Progress Saved)"
             }
+            loadBackups()
         } else {
             let error = manager.lastBackupFailure?.message ?? manager.lastError ?? "Backup failed"
             updateActivity(udid: udid) {
@@ -1165,16 +1166,34 @@ final class BackupViewModel: ObservableObject {
         livenessTasks[udid]?.cancel()
         livenessTasks[udid] = Task { [weak self] in
             var hasTriggeredMidRunRefresh = false
+            var tickCount = 0
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 if Task.isCancelled { break }
                 guard let self else { return }
+                tickCount += 1
+
+                // Immediately republish on every 1-second tick BEFORE any blocking disk/lsof I/O
+                // so transition timers ("Pausing… (1s)", "(2s)"), elapsed time, and ETA countdown
+                // tick smoothly in the UI without freezing at (0s).
+                var isTransitioning = false
+                self.updateActivity(udid: udid) {
+                    $0.processAlive = true
+                    isTransitioning = ($0.transition != nil)
+                }
+                self.refreshLegacyProgressState()
+
+                // Skip lsof / external USB directory scanning while pausing/restarting so teardown
+                // never contends with disk I/O, and throttle disk scans to every 3 seconds while running.
+                guard !isTransitioning, tickCount % 3 == 1 else { continue }
+
                 let (domain, diskDate) = await Task.detached(priority: .utility) {
                     (
                         BackupManager.sampleActiveDomain(for: udid),
                         BackupManager.latestBackupDiskActivityDate(for: udid)
                     )
                 }.value
+                if Task.isCancelled { break }
                 var shouldNotifyPasscode = false
                 self.updateActivity(udid: udid) {
                     $0.processAlive = true

@@ -206,6 +206,7 @@ def test_self_contained_per_backup_progress_and_coherent_eta(root: Path) -> None
     assert_contains(list_view, "activity.activeTimelineDescription", "BackupRow must render activeTimelineDescription when active")
     assert_contains(list_view, "backup.statusTimestampDescription", "BackupRow must render explicit state-prefixed timestamps when idle and Started time when active")
     assert_contains(list_view, '"· Calculating ETA…"', "BackupRow must show Calculating ETA… while initial transfer velocity is being measured")
+    assert_contains(vm, "guard !isTransitioning, tickCount % 3 == 1 else { continue }", "Liveness monitor must republish 1s UI ticks before any disk I/O and skip disk scans while pausing")
 
 
 
