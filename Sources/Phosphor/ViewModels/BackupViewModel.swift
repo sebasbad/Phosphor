@@ -1259,6 +1259,12 @@ final class BackupViewModel: ObservableObject {
                         let liveRate = Self.computeKernelByteSpeed(for: $0, windowSeconds: 15.0, now: now)
                         if let liveRate, liveRate > 0 {
                             $0.speed = self.formatBytesPerSecond(liveRate)
+                        } else if ($0.progressFraction ?? 0) <= 0.01 {
+                            // Clear pre-diffing Manifest.db download speed during the PIN/diffing pause
+                            $0.speed = nil
+                            $0.lastComputedEtaSeconds = nil
+                            $0.lastComputedEtaAt = nil
+                            $0.eta = nil
                         }
 
                         // Recompute coherent ETA on every 1s tick using exact kernel byte accounting
@@ -1699,8 +1705,26 @@ final class BackupViewModel: ObservableObject {
 
     /// Records a 1-second sample of kernel `ri_diskio_byteswritten` (`proc_pid_rusage`), keeping a 10-minute
     /// rolling window of active payload writes so live `MB/s` and byte-based ETA are immune to `tqdm` integer `%` quantization.
+    ///
+    /// To prevent the pre-transfer `Manifest.db` download + multi-minute PIN/diffing pause from diluting the denominator
+    /// of the rolling transfer rate, samples only append when `bytesWritten` actually increases (`> last.bytes`), and if
+    /// the first write after a `>20s` startup/diffing pause occurs while `(activity.progressFraction ?? 0) <= 0.01`, the
+    /// pre-diffing `Manifest.db` sample is replaced by the start of real payload transfer.
     private static func recordKernelByteSample(on activity: inout BackupActivity, bytesWritten: UInt64, now: Date) {
         guard bytesWritten > 0 else { return }
+        if let last = activity.byteWriteSamples.last {
+            guard bytesWritten > last.bytes else { return }
+            let gap = now.timeIntervalSince(last.date)
+            if gap > 20.0, (activity.progressFraction ?? 0) <= 0.01 {
+                // First payload write after the startup PIN + manifest-diffing pause:
+                // anchor the rolling window right at the start of payload transfer (`last.bytes` 1s before `now`).
+                activity.byteWriteSamples = [
+                    (now.addingTimeInterval(-1.0), last.bytes),
+                    (now, bytesWritten)
+                ]
+                return
+            }
+        }
         activity.byteWriteSamples.append((now, bytesWritten))
         let cutoff = now.addingTimeInterval(-600) // 10-minute rolling window
         if activity.byteWriteSamples.count > 2 {
@@ -1715,11 +1739,14 @@ final class BackupViewModel: ObservableObject {
         now: Date
     ) -> Double? {
         guard let last = activity.byteWriteSamples.last else { return nil }
+        // If no new bytes have been written in the last 15 seconds (e.g. during PIN prompt or manifest diffing),
+        // live throughput is currently 0, so return nil rather than reporting a stale pre-pause speed.
+        guard now.timeIntervalSince(last.date) <= 15.0 else { return nil }
         let targetStart = now.addingTimeInterval(-windowSeconds)
         // Find the sample closest to `targetStart` (or the oldest sample if window hasn't filled yet)
         let ref = activity.byteWriteSamples.first(where: { $0.date >= targetStart }) ?? activity.byteWriteSamples.first
         guard let ref, last.bytes > ref.bytes else { return nil }
-        let dt = last.date.timeIntervalSince(ref.date)
+        let dt = now.timeIntervalSince(ref.date)
         guard dt >= 1.5 else { return nil }
         return Double(last.bytes - ref.bytes) / dt
     }
@@ -1805,18 +1832,22 @@ final class BackupViewModel: ObservableObject {
            activity.sessionBytesWritten > 0,
            let firstSample = activity.byteWriteSamples.first,
            let lastSample = activity.byteWriteSamples.last {
-            let baselineBytes = activity.isResume ? (activity.resumeBytesBaseline ?? 0) : 0
-            let currentOnDisk = baselineBytes + activity.sessionBytesWritten
-            if targetUsed > currentOnDisk {
-                let dt = lastSample.date.timeIntervalSince(firstSample.date)
-                let dBytes = lastSample.bytes > firstSample.bytes ? (lastSample.bytes - firstSample.bytes) : 0
-                // Require at least 5 seconds and 5 MB of active payload writes in the rolling window
-                if dt >= 5.0, dBytes >= 5_000_000 {
-                    let rollingRate = Double(dBytes) / dt
-                    let remainingBytes = Double(targetUsed - currentOnDisk)
-                    let estSeconds = remainingBytes / rollingRate
-                    if estSeconds > 0, estSeconds < 86_400 * 7 {
-                        return formatEtaSeconds(estSeconds)
+            // Do not compute a premature ETA while the process is sitting in the pre-transfer PIN/diffing pause
+            let isInPreTransferDiffing = (activity.progressFraction ?? 0) <= 0.01 && Date().timeIntervalSince(lastSample.date) > 10.0
+            if !isInPreTransferDiffing {
+                let baselineBytes = activity.isResume ? (activity.resumeBytesBaseline ?? 0) : 0
+                let currentOnDisk = baselineBytes + activity.sessionBytesWritten
+                if targetUsed > currentOnDisk {
+                    let dt = lastSample.date.timeIntervalSince(firstSample.date)
+                    let dBytes = lastSample.bytes > firstSample.bytes ? (lastSample.bytes - firstSample.bytes) : 0
+                    // Require at least 5 seconds and 5 MB of active payload writes in the rolling window
+                    if dt >= 5.0, dBytes >= 5_000_000 {
+                        let rollingRate = Double(dBytes) / dt
+                        let remainingBytes = Double(targetUsed - currentOnDisk)
+                        let estSeconds = remainingBytes / rollingRate
+                        if estSeconds > 0, estSeconds < 86_400 * 7 {
+                            return formatEtaSeconds(estSeconds)
+                        }
                     }
                 }
             }
