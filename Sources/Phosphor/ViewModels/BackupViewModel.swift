@@ -339,6 +339,10 @@ final class BackupViewModel: ObservableObject {
         browsableBackups.first(where: { $0.healthState == .complete }) ?? browsableBackups.first
     }
     @Published var isCreating = false
+    /// True until the initial backup directory scan completes (or while a folder reload is in flight with no loaded list yet).
+    /// Prevents starting a new backup before existing complete/paused/broken backups on external disks are known.
+    @Published private(set) var isLoadingBackups = true
+    @Published private(set) var hasCompletedInitialLoad = false
     @Published var progressText = ""
     @Published var progressFraction: Double?
     @Published var showAlert = false
@@ -419,9 +423,18 @@ final class BackupViewModel: ObservableObject {
         let continuation: CheckedContinuation<Void, Never>
     }
 
+    private var loadedBackupDirectory: String?
+
     func loadBackups() {
         discoveryTask?.cancel()
         let activeDir = BackupManager.activeBackupDir
+        if loadedBackupDirectory != activeDir {
+            hasCompletedInitialLoad = false
+            backups = []
+        }
+        if !hasCompletedInitialLoad || backups.isEmpty {
+            isLoadingBackups = true
+        }
         let cachedSizes = resolvedSizesByPath
         discoveryTask = Task.detached(priority: .userInitiated) { [weak self] in
             let scanned = BackupManager.scanBackupDirectory(at: activeDir)
@@ -434,13 +447,27 @@ final class BackupViewModel: ObservableObject {
             }
             await MainActor.run { [weak self] in
                 guard let self else { return }
+                self.loadedBackupDirectory = activeDir
                 self.backupManager.backups = hydrated
                 self.backupManager.lastError = scanned.error
                 self.backups = hydrated
                 self.loadError = scanned.error
+                self.hasCompletedInitialLoad = true
+                self.isLoadingBackups = false
                 self.reconcileSelectedBackupAfterReload()
                 self.resolveBackupSizesInBackground(for: hydrated)
             }
+        }
+    }
+
+    /// Ensures the active backup directory has been scanned and `backups` is populated before starting any backup action.
+    func ensureBackupsLoaded() async {
+        let activeDir = BackupManager.activeBackupDir
+        if !hasCompletedInitialLoad || loadedBackupDirectory != activeDir || isLoadingBackups {
+            if discoveryTask == nil || loadedBackupDirectory != activeDir {
+                loadBackups()
+            }
+            await discoveryTask?.value
         }
     }
 
@@ -497,15 +524,9 @@ final class BackupViewModel: ObservableObject {
         }
 
         UserDefaults.standard.set(target, forKey: BackupManager.backupDirectoryUserDefaultsKey)
-        backupManager.discoverBackups()
-        backups = backupManager.backups
-        loadError = backupManager.lastError
-        reconcileSelectedBackupAfterReload()
-        resolveBackupSizesInBackground(for: backups)
-        if backups.isEmpty {
-            alertMessage = loadError ?? "No backups found in \(target)."
-            showAlert = true
-        }
+        hasCompletedInitialLoad = false
+        backups = []
+        loadBackups()
     }
 
     func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false) async {
@@ -521,13 +542,28 @@ final class BackupViewModel: ObservableObject {
     }
 
     func createBackup(udid: String, incremental: Bool = false, preferNetwork: Bool = false, encrypted: Bool = false, isResume: Bool = false, device: DeviceInfo? = nil, configuration: DeviceBackupConfiguration? = nil) async {
+        // Wait for the backup directory scan to finish so existing complete/paused/broken backups are loaded first
+        await ensureBackupsLoaded()
+
+        // If a paused resumable backup already exists for this device and caller did not explicitly request a full non-resume run,
+        // promote to resume so we never blindly start a fresh session while unaware of paused progress.
+        let effectiveIsResume: Bool = {
+            if isResume { return true }
+            if incremental {
+                if backups.contains(where: { !$0.isArchivedSnapshot && ($0.udid == udid || $0.id == udid) && $0.healthState == .paused }) {
+                    return true
+                }
+            }
+            return false
+        }()
+
         let request = BackupRequest(
             id: UUID(),
             udid: udid,
             incremental: incremental,
             preferNetwork: preferNetwork,
             encrypted: encrypted,
-            isResume: isResume,
+            isResume: effectiveIsResume,
             device: device,
             configuration: configuration
         )

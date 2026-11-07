@@ -113,10 +113,11 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
         let hasManifest = (fm.fileExists(atPath: manifestDb) && ((try? fm.attributesOfItem(atPath: manifestDb)[.size] as? UInt64) ?? 0) > 0) ||
                           (fm.fileExists(atPath: manifestPlist) && ((try? fm.attributesOfItem(atPath: manifestPlist)[.size] as? UInt64) ?? 0) > 0)
         let hasRootPayload = BackupManager.backupRootHasPayloadData(path)
-        let hasAnyPayload = hasRootPayload || BackupManager.incompleteBackupHasPayloadData(path)
         let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
         var isSnapshotDir: ObjCBool = false
         let hasSnapshotDir = fm.fileExists(atPath: snapshotPath, isDirectory: &isSnapshotDir) && isSnapshotDir.boolValue
+        let hasSnapshotPayload = hasSnapshotDir && BackupManager.backupRootHasPayloadData(snapshotPath)
+        let hasAnyPayload = hasRootPayload || hasSnapshotPayload
 
         let resolvedSnapshotState: String? = {
             if let snapshotState { return snapshotState }
@@ -136,7 +137,7 @@ struct BackupInfo: Identifiable, Hashable, Sendable {
         guard hasAnyPayload else { return .broken }
         guard hasManifest else { return .paused }
 
-        if hasSnapshotDir, BackupManager.backupRootHasPayloadData(snapshotPath) {
+        if hasSnapshotPayload {
             return .paused
         }
 
