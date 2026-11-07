@@ -919,6 +919,8 @@ struct BackupRow: View {
     var onDiagnose: () -> Void = {}
     var onUnarchive: () -> Void = {}
     @State private var isExporting = false
+    @State private var liveNow: Date = Date()
+    private let rowSecondTicker = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
 
     private var isActive: Bool { activity?.isActive == true }
     private var isStalled: Bool { activity?.isStalled == true }
@@ -987,7 +989,7 @@ struct BackupRow: View {
                 if let speed = activity.speed, !speed.isEmpty {
                     Text("· Speed: \(speed)")
                 }
-                if let consolidatedETA = activity.consolidatedETADescription {
+                if let consolidatedETA = activity.consolidatedETADescription(at: liveNow) {
                     Text("· ETA: \(consolidatedETA)")
                 } else if let predicted = activity.predictiveETA,
                           predicted.confidence != .none,
@@ -1126,7 +1128,7 @@ struct BackupRow: View {
 
                 HStack(spacing: 6) {
                     if let activity, isActive {
-                        Text(activity.activeTimelineDescription)
+                        Text(activity.activeTimelineDescription(at: liveNow))
                     } else {
                         Text(backup.statusTimestampDescription)
                     }
@@ -1153,7 +1155,7 @@ struct BackupRow: View {
                 if isBusy {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
-                        let elapsed = activity?.transitionElapsedSeconds.map { " (\($0)s)" } ?? ""
+                        let elapsed = activity?.transitionElapsedSeconds(at: liveNow).map { " (\($0)s)" } ?? ""
                         Text(activity?.transition == .restarting ? "Restarting…\(elapsed)" : "Pausing…\(elapsed)")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
@@ -1276,6 +1278,11 @@ struct BackupRow: View {
             }
         }
         .padding(.vertical, 6)
+        .onReceive(rowSecondTicker) { tick in
+            if isActive || isBusy {
+                liveNow = tick
+            }
+        }
         .overlay {
             if isExporting {
                 HStack(spacing: 8) {

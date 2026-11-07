@@ -78,6 +78,7 @@ struct PhosphorApp: App {
                     scheduler.attachBackupViewModel(backupVM)
                     scheduler.startMonitoring()
                     backupVM.loadBackups()
+                    setupDistributedAutomationNotifications()
                     Task {
                         // Let SwiftUI paint the first window before starting
                         // device polling.
@@ -250,5 +251,31 @@ struct PhosphorApp: App {
         alert.addButton(withTitle: "Create Full Wi-Fi Backup")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func setupDistributedAutomationNotifications() {
+        let center = DistributedNotificationCenter.default()
+        center.addObserver(forName: Notification.Name("com.phosphor.automation"), object: nil, queue: .main) { note in
+            let action = (note.object as? String) ?? ""
+            Task { @MainActor in
+                switch action {
+                case "showBackups":
+                    selectedSection = .backups
+                case "showDevices":
+                    selectedSection = .devices
+                case "resumeOrStart":
+                    selectedSection = .backups
+                    startBackupNow()
+                case "pauseAll":
+                    for udid in Array(backupVM.backupActivities.keys) {
+                        backupVM.cancelBackup(udid: udid)
+                    }
+                case "refreshBackups":
+                    backupVM.loadBackups()
+                default:
+                    break
+                }
+            }
+        }
     }
 }

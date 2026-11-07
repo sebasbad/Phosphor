@@ -210,8 +210,12 @@ final class BackupViewModel: ObservableObject {
         }
 
         var transitionElapsedSeconds: Int? {
+            transitionElapsedSeconds(at: currentTick)
+        }
+
+        func transitionElapsedSeconds(at now: Date) -> Int? {
             guard let transitionStartTime else { return nil }
-            return max(0, Int(currentTick.timeIntervalSince(transitionStartTime)))
+            return max(0, Int(now.timeIntervalSince(transitionStartTime)))
         }
 
         var isQuiet: Bool {
@@ -344,21 +348,25 @@ final class BackupViewModel: ObservableObject {
         /// Consolidated ETA string including remaining duration and estimated wall-clock finish time
         /// (with date when crossing midnight or >24h, e.g. "2h 24m (~22:34)" or "14h 10m (~Tomorrow at 10:25)").
         var consolidatedETADescription: String? {
+            consolidatedETADescription(at: currentTick)
+        }
+
+        func consolidatedETADescription(at now: Date) -> String? {
             if let baseSecs = lastComputedEtaSeconds, let baseAt = lastComputedEtaAt, baseSecs > 0 {
-                let elapsedSinceCalc = max(0, currentTick.timeIntervalSince(baseAt))
+                let elapsedSinceCalc = max(0, now.timeIntervalSince(baseAt))
                 let liveSecs = max(30, baseSecs - elapsedSinceCalc)
                 let durationStr = BackupViewModel.formatEtaSeconds(liveSecs)
-                let finish = currentTick.addingTimeInterval(liveSecs)
+                let finish = now.addingTimeInterval(liveSecs)
                 return "\(durationStr) (~\(finish.contextualClockString()))"
             }
             if let eta, !eta.isEmpty, let secs = BackupViewModel.parseEtaToSeconds(eta), secs > 0 {
-                let finish = currentTick.addingTimeInterval(secs)
+                let finish = now.addingTimeInterval(secs)
                 return "\(eta) (~\(finish.contextualClockString()))"
             }
             if let predicted = predictiveETA, predicted.confidence != .none, predicted.estimatedSeconds > 0 {
                 let secs = predicted.estimatedSeconds
                 let durationStr = BackupViewModel.formatEtaSeconds(secs)
-                let finish = currentTick.addingTimeInterval(secs)
+                let finish = now.addingTimeInterval(secs)
                 return "~\(durationStr) (~\(finish.contextualClockString()))"
             }
             return nil
@@ -370,7 +378,11 @@ final class BackupViewModel: ObservableObject {
         /// - `1h ..< 24h`: `"2h 14m elapsed"`
         /// - `>= 24h`: `"1d 3h elapsed"`
         var elapsedTimeDescription: String {
-            let secs = max(0, Int(currentTick.timeIntervalSince(startTime)))
+            elapsedTimeDescription(at: currentTick)
+        }
+
+        func elapsedTimeDescription(at now: Date) -> String {
+            let secs = max(0, Int(now.timeIntervalSince(startTime)))
             if secs < 60 {
                 return "\(max(1, secs))s elapsed"
             } else if secs < 3600 {
@@ -390,8 +402,12 @@ final class BackupViewModel: ObservableObject {
 
         /// Explicit start time + elapsed duration for the active backup subtitle row.
         var activeTimelineDescription: String {
+            activeTimelineDescription(at: currentTick)
+        }
+
+        func activeTimelineDescription(at now: Date) -> String {
             let startStr = startTime.contextualClockString(includeTodayPrefix: true)
-            return "Started \(startStr) (\(elapsedTimeDescription))"
+            return "Started \(startStr) (\(elapsedTimeDescription(at: now)))"
         }
     }
 
@@ -1219,15 +1235,7 @@ final class BackupViewModel: ObservableObject {
                             $0.isAwaitingPasscode = false
                         }
                     }
-                    // Also clear passcode banner as soon as process writes new payload files or Status.plist on a fresh backup
-                    if !$0.isResume && $0.isAwaitingPasscode && ($0.hasReceivedTransferProgress || BackupManager.incompleteBackupHasPayloadData(BackupManager.backupPath(for: udid))) {
-                        $0.isAwaitingPasscode = false
-                        $0.hasReceivedTransferProgress = true
-                    }
-                    // If the backup process has been running for 3+ seconds with zero transfer progress,
-                    // not yet confirmed past passcode, and we are past local sanitization, check if
-                    // user passcode is needed. If device already accepted PIN and started payload/Status.plist writes,
-                    // do not re-assert isAwaitingPasscode.
+                    // Check if user passcode is needed without blocking MainActor on external disk I/O
                     if !$0.hasReceivedTransferProgress,
                        !$0.isResume,
                        $0.transition == nil,
