@@ -987,12 +987,12 @@ struct BackupRow: View {
                 if let speed = activity.speed, !speed.isEmpty {
                     Text("· Speed: \(speed)")
                 }
-                if let eta = activity.eta, !eta.isEmpty {
-                    Text("· Est. Remaining: \(eta)")
+                if let consolidatedETA = activity.consolidatedETADescription {
+                    Text("· ETA: \(consolidatedETA)")
                 } else if let predicted = activity.predictiveETA,
                           predicted.confidence != .none,
                           predicted.estimatedSeconds > 0 {
-                    Text("· Est. Remaining: ~\(Self.formatDuration(predicted.estimatedSeconds))")
+                    Text("· ETA: ~\(Self.formatDuration(predicted.estimatedSeconds))")
                 }
             }
             .font(.system(size: 10))
@@ -1122,8 +1122,12 @@ struct BackupRow: View {
                 .foregroundStyle(.secondary)
 
                 HStack(spacing: 8) {
-                    Text(backup.dateString)
-                    Text("(\(backup.relativeDate))")
+                    if let activity, isActive {
+                        let startStr = activity.startTime.contextualClockString()
+                        Text(startStr.contains(" ") ? "Started \(startStr)" : "Started at \(startStr)")
+                    } else {
+                        Text(backup.statusTimestampDescription)
+                    }
                     Text("-")
                     if backup.sizeResolved {
                         Text(backup.sizeString)

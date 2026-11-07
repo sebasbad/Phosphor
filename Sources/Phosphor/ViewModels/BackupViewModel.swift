@@ -330,6 +330,22 @@ final class BackupViewModel: ObservableObject {
         var isCalculatingResumeBaseline: Bool {
             isResume && resumeBaselineFraction <= 0.0 && progressFraction == nil
         }
+
+        /// Consolidated ETA string including remaining duration and estimated wall-clock finish time
+        /// (with date when crossing midnight or >24h, e.g. "2h 24m (~22:34)" or "14h 10m (~Tomorrow at 10:25)").
+        var consolidatedETADescription: String? {
+            if let eta, !eta.isEmpty, let secs = BackupViewModel.parseEtaToSeconds(eta), secs > 0 {
+                let finish = Date().addingTimeInterval(secs)
+                return "\(eta) (~\(finish.contextualClockString()))"
+            }
+            if let predicted = predictiveETA, predicted.confidence != .none, predicted.estimatedSeconds > 0 {
+                let secs = predicted.estimatedSeconds
+                let durationStr = BackupViewModel.formatEtaSeconds(secs)
+                let finish = Date().addingTimeInterval(secs)
+                return "~\(durationStr) (~\(finish.contextualClockString()))"
+            }
+            return nil
+        }
     }
 
     @Published var backups: [BackupInfo] = []
@@ -379,7 +395,7 @@ final class BackupViewModel: ObservableObject {
     private var currentDomainToken = UUID()
     private var currentSearchToken = UUID()
     private var discoveryTask: Task<Void, Never>?
-    private var sizeResolutionTask: Task<Void, Never>?
+    private var sizeResolutionTasksByPath: [String: Task<Void, Never>] = [:]
     private var resolvedSizesByPath: [String: (size: UInt64, date: Date?)] = [:]
     private var latestBackupRequests: [String: BackupRequest] = [:]
     private var failedBackupRequests: [UUID: BackupRequest] = [:]
@@ -447,8 +463,12 @@ final class BackupViewModel: ObservableObject {
             let scanned = BackupManager.scanBackupDirectory(at: activeDir)
             if Task.isCancelled { return }
             let hydrated = scanned.backups.map { backup -> BackupInfo in
-                if let cached = cachedSizes[backup.path], cached.date == backup.lastBackupDate {
-                    return backup.withSize(cached.size)
+                if let cached = cachedSizes[backup.path] {
+                    // For active or paused backups whose plist date updates mid-run, retain the last resolved
+                    // size rather than resetting the row back to "Calculating..." on every refresh.
+                    if cached.date == backup.lastBackupDate || cached.size > 0 {
+                        return backup.withSize(cached.size)
+                    }
                 }
                 return backup
             }
@@ -487,23 +507,33 @@ final class BackupViewModel: ObservableObject {
     }
 
     private func resolveBackupSizesInBackground(for snapshot: [BackupInfo]) {
+        let validPaths = Set(snapshot.map(\.path))
+        // Cancel tasks only for backup paths that no longer exist in the snapshot
+        for (path, task) in sizeResolutionTasksByPath where !validPaths.contains(path) {
+            task.cancel()
+            sizeResolutionTasksByPath.removeValue(forKey: path)
+        }
+
         let unresolved = snapshot.filter { !$0.sizeResolved }
         guard !unresolved.isEmpty else { return }
-        sizeResolutionTask?.cancel()
-        let snapshotIds = Set(snapshot.map(\.id))
-        sizeResolutionTask = Task.detached(priority: .utility) { [weak self] in
-            for backup in unresolved {
-                if Task.isCancelled { return }
-                let computedSize = FileManager.default.directorySize(at: backup.path)
-                let sized = backup.withSize(computedSize)
+
+        // Resolve each backup's size independently in its own background task so a 400k-file active backup
+        // never blocks broken or archived backups from resolving immediately, and mid-run loadBackups()
+        // refreshes never cancel in-flight size calculations.
+        for backup in unresolved {
+            let path = backup.path
+            guard sizeResolutionTasksByPath[path] == nil else { continue }
+            let backupId = backup.id
+            let backupDate = backup.lastBackupDate
+            sizeResolutionTasksByPath[path] = Task.detached(priority: .utility) { [weak self] in
+                let computedSize = FileManager.default.directorySize(at: path)
                 if Task.isCancelled { return }
                 await MainActor.run { [weak self] in
                     guard let self else { return }
-                    self.resolvedSizesByPath[backup.path] = (computedSize, backup.lastBackupDate)
-                    let currentIds = Set(self.backups.map(\.id))
-                    guard currentIds == snapshotIds,
-                          let idx = self.backups.firstIndex(where: { $0.id == sized.id }) else { return }
-                    self.backups[idx] = sized
+                    self.sizeResolutionTasksByPath.removeValue(forKey: path)
+                    self.resolvedSizesByPath[path] = (computedSize, backupDate)
+                    guard let idx = self.backups.firstIndex(where: { $0.id == backupId && $0.path == path }) else { return }
+                    self.backups[idx] = self.backups[idx].withSize(computedSize)
                     self.backupManager.backups = self.backups
                 }
             }
@@ -1443,7 +1473,7 @@ final class BackupViewModel: ObservableObject {
     }
 
     /// Parse a formatted ETA ("5m 30s", "1h 2m 10s") into seconds.
-    private static func parseEtaToSeconds(_ s: String) -> TimeInterval? {
+    nonisolated static func parseEtaToSeconds(_ s: String) -> TimeInterval? {
         var total: TimeInterval = 0
         for part in s.lowercased().components(separatedBy: " ") {
             let token = part.trimmingCharacters(in: .whitespaces)
@@ -1454,7 +1484,7 @@ final class BackupViewModel: ObservableObject {
         return total > 0 ? total : nil
     }
 
-    private static func formatEtaSeconds(_ seconds: TimeInterval) -> String {
+    nonisolated static func formatEtaSeconds(_ seconds: TimeInterval) -> String {
         let clamped = max(1, Int(seconds.rounded()))
         let h = clamped / 3600
         let m = (clamped % 3600) / 60

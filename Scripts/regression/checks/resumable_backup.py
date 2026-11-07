@@ -190,6 +190,17 @@ def test_self_contained_per_backup_progress_and_coherent_eta(root: Path) -> None
     assert "priorBackupSize" not in vm, "Each backup must calculate its baseline independently without relying on other backups"
     assert_contains(vm, "static func computeCoherentETA(", "BackupViewModel must compute coherent ETA from active session transfer velocity")
     assert_contains(vm, "static func recordTransferSample(", "BackupViewModel must record active transfer fraction samples after initial manifest diffing")
+    assert_contains(vm, "var consolidatedETADescription: String?", "BackupActivity must expose consolidatedETADescription with duration and finish clock/date")
+    assert_contains(vm, "sizeResolutionTasksByPath", "BackupViewModel must resolve backup sizes independently per path without blocking or cancelling across rows")
+
+    ext = read(root, "Sources/Phosphor/Utilities/Extensions.swift")
+    info = read(root, "Sources/Phosphor/Models/BackupInfo.swift")
+    list_view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+    assert_contains(ext, "func contextualClockString(", "Date must format contextual start/finish clock strings with Tomorrow/date awareness")
+    assert_contains(ext, "fts_open(", "FileManager.directorySize must use fast POSIX fts_open traversal")
+    assert_contains(info, "var statusTimestampDescription: String", "BackupInfo must provide explicit state-prefixed timestamp descriptions")
+    assert_contains(list_view, "backup.statusTimestampDescription", "BackupRow must render explicit state-prefixed timestamps when idle and Started time when active")
+
 
 
 

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import SwiftUI
 
@@ -5,9 +6,15 @@ import SwiftUI
 
 extension Date {
     var relativeString: String {
+        let now = Date()
+        // Never format a clock-skewed or timezone-shifted backup timestamp as lying in the future ("in 47 minutes").
+        let clamped = self > now ? now : self
+        if now.timeIntervalSince(clamped) < 45 {
+            return "just now"
+        }
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
-        return formatter.localizedString(for: self, relativeTo: Date())
+        return formatter.localizedString(for: clamped, relativeTo: now)
     }
 
     var shortString: String {
@@ -15,6 +22,30 @@ extension Date {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter.string(from: self)
+    }
+
+    /// Formats a start or finish timestamp relative to today (e.g., "19:57", "Tomorrow at 02:15", "9 Nov at 14:20").
+    func contextualClockString(relativeTo reference: Date = Date()) -> String {
+        let cal = Calendar.current
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateStyle = .none
+        timeFormatter.timeStyle = .short
+        let timeStr = timeFormatter.string(from: self)
+
+        if cal.isDate(self, inSameDayAs: reference) {
+            return timeStr
+        }
+        if let tomorrow = cal.date(byAdding: .day, value: 1, to: reference),
+           cal.isDate(self, inSameDayAs: tomorrow) {
+            return "Tomorrow at \(timeStr)"
+        }
+        if let yesterday = cal.date(byAdding: .day, value: -1, to: reference),
+           cal.isDate(self, inSameDayAs: yesterday) {
+            return "Yesterday at \(timeStr)"
+        }
+        let dayFormatter = DateFormatter()
+        dayFormatter.setLocalizedDateFormatFromTemplate("d MMM")
+        return "\(dayFormatter.string(from: self)) at \(timeStr)"
     }
 
     var iso8601String: String {
@@ -77,17 +108,31 @@ extension FileManager {
     func directorySize(at path: String) -> UInt64 {
         var totalSize: UInt64 = 0
         var seenInodes = Set<UInt64>()
-        guard let enumerator = enumerator(atPath: path) else { return 0 }
-        while let file = enumerator.nextObject() as? String {
-            let fullPath = (path as NSString).appendingPathComponent(file)
-            if let attrs = try? attributesOfItem(atPath: fullPath),
-               let fileType = attrs[.type] as? FileAttributeType,
-               fileType == .typeRegular,
-               let size = attrs[.size] as? UInt64 {
-                if let inode = attrs[.systemFileNumber] as? UInt64 {
+
+        // Fast POSIX fts_open walk avoids Foundation NSFileManager/NSDictionary allocation per file
+        // across 350,000+ backup files on external APFS/USB disks.
+        let cPath = strdup(path)
+        guard let cPath else { return 0 }
+        defer { free(cPath) }
+
+        var paths: [UnsafeMutablePointer<CChar>?] = [cPath, nil]
+        guard let fts = fts_open(&paths, FTS_PHYSICAL | FTS_NOCHDIR | FTS_XDEV, nil) else {
+            return 0
+        }
+        defer { fts_close(fts) }
+
+        while let entry = fts_read(fts) {
+            if Task.isCancelled { return 0 }
+            let info = Int32(entry.pointee.fts_info)
+            if info == FTS_F, let statp = entry.pointee.fts_statp {
+                let inode = statp.pointee.st_ino
+                if inode != 0 {
                     guard seenInodes.insert(inode).inserted else { continue }
                 }
-                totalSize += size
+                let size = statp.pointee.st_size
+                if size > 0 {
+                    totalSize += UInt64(size)
+                }
             }
         }
         return totalSize
