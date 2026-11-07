@@ -44,12 +44,15 @@ struct BackupListView: View {
                 newBackupMenu
                 .buttonStyle(.borderedProminent)
                 .tint(deviceVM.selectedDevice.map { hasResumableBackup(for: $0) } == true ? .orange : .brandAccent)
+                .disabled(backupVM.isLoadingBackups)
+                .help(backupVM.isLoadingBackups ? "Scanning backup folder on disk…" : "Create or manage backups")
 
                 Button {
                     backupVM.loadBackups()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
+                .disabled(backupVM.isLoadingBackups)
             }
             .padding(20)
 
@@ -66,7 +69,18 @@ struct BackupListView: View {
             }
 
             if backupVM.backups.isEmpty {
-                if activeBackupActivities.isEmpty {
+                if backupVM.isLoadingBackups {
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .controlSize(.regular)
+                        Text("Scanning Backup Location…")
+                            .font(.headline)
+                        Text("Reading existing backups from \(BackupManager.activeBackupDir)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if activeBackupActivities.isEmpty {
                     EmptyStateView(
                         icon: "externaldrive",
                         title: "No Backups Found",
@@ -291,7 +305,9 @@ struct BackupListView: View {
                 Label("Schedule Backups...", systemImage: "clock")
             }
         } label: {
-            if let device = deviceVM.selectedDevice, hasResumableBackup(for: device) {
+            if backupVM.isLoadingBackups {
+                Label("Scanning Backups…", systemImage: "hourglass")
+            } else if let device = deviceVM.selectedDevice, hasResumableBackup(for: device) {
                 Label("Resume Backup", systemImage: "play.circle.fill")
             } else {
                 Label("New Backup", systemImage: "plus")
@@ -338,6 +354,9 @@ struct BackupListView: View {
     }
 
     private var backupSummary: String {
+        if backupVM.isLoadingBackups && backupVM.backups.isEmpty {
+            return "Scanning backup location…"
+        }
         let backupWord = backupVM.backups.count == 1 ? "backup" : "backups"
         let deviceWord = backedUpDeviceCount == 1 ? "device" : "devices"
         return "\(backupVM.backups.count) \(backupWord) across \(backedUpDeviceCount) \(deviceWord) - \(backupVM.totalSize) total"
@@ -346,8 +365,8 @@ struct BackupListView: View {
     @ViewBuilder
     private var backupStateNotice: some View {
         if let device = deviceVM.selectedDevice {
-            // Suppress notice when a backup is actively running or when a paused/broken row is already displayed in the list
-            if backupVM.isBackupActive(for: device.id) || hasResumableBackup(for: device) {
+            // Suppress notice while scanning backup directory, when a backup is actively running, or when a paused/broken row is already displayed in the list
+            if backupVM.isLoadingBackups || backupVM.isBackupActive(for: device.id) || hasResumableBackup(for: device) {
                 EmptyView()
             } else {
                 let state = backupState(for: device)

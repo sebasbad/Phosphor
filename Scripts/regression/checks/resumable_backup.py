@@ -167,6 +167,15 @@ def test_secondary_surfaces_and_data_tabs_sync_with_resumable_and_archived_backu
     ]:
         assert_contains(view_src, "preferredBrowsableBackup", f"{name} must auto-select preferredBrowsableBackup")
 
+    list_view = read(root, "Sources/Phosphor/Views/Backup/BackupListView.swift")
+    overview = read(root, "Sources/Phosphor/Views/Device/DeviceOverviewView.swift")
+    assert_contains(vm, "@Published private(set) var isLoadingBackups = true", "BackupViewModel must start with isLoadingBackups = true until the backup directory is scanned")
+    assert_contains(vm, "await ensureBackupsLoaded()", "createBackup must await ensureBackupsLoaded() before starting any backup")
+    assert_contains(list_view, '"Scanning Backup Location…"', "BackupListView must show a scanning state instead of No Backups Found while loading")
+    assert_contains(list_view, ".disabled(backupVM.isLoadingBackups)", "BackupListView must disable New Backup while scanning the backup directory")
+    assert_contains(overview, ".disabled(backupVM.isLoadingBackups)", "DeviceOverviewView must disable the Backup quick action while scanning the backup directory")
+    assert_contains(app, "backupVM.isLoadingBackups", "PhosphorApp menu bar must disable Backup Now while scanning the backup directory")
+
 
 
 

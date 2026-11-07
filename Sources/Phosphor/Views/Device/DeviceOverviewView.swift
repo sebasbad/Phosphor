@@ -437,14 +437,15 @@ struct DeviceOverviewView: View {
                     Task { await deviceVM.takeScreenshot() }
                 }
                 ActionButton(
-                    icon: backupVM.isBackupActive(for: device.id) ? "hourglass" : backupActionIcon(for: device),
-                    label: backupVM.isBackupActive(for: device.id) ? "Backing Up..." : backupActionLabel(for: device),
+                    icon: (backupVM.isBackupActive(for: device.id) || backupVM.isLoadingBackups) ? "hourglass" : backupActionIcon(for: device),
+                    label: backupVM.isBackupActive(for: device.id) ? "Backing Up..." : (backupVM.isLoadingBackups ? "Scanning Disk..." : backupActionLabel(for: device)),
                     color: hasResumableBackup(for: device) ? .orange : .brandAccent
                 ) {
                     startBackup(for: device)
                 }
                 .disabled(backupVM.isBackupActive(for: device.id))
-                .help(hasResumableBackup(for: device) ? "Resume interrupted backup from saved progress" : "Start a backup for this device")
+                .disabled(backupVM.isLoadingBackups)
+                .help(backupVM.isLoadingBackups ? "Scanning backup location on disk…" : (hasResumableBackup(for: device) ? "Resume interrupted backup from saved progress" : "Start a backup for this device"))
                 if !device.isPaired {
                     ActionButton(icon: "link", label: "Pair", color: .green) {
                         Task { await deviceVM.pair() }

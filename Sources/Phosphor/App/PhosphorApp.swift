@@ -77,12 +77,12 @@ struct PhosphorApp: App {
                     // that delay must not terminate an app with enabled schedules.
                     scheduler.attachBackupViewModel(backupVM)
                     scheduler.startMonitoring()
+                    backupVM.loadBackups()
                     Task {
                         // Let SwiftUI paint the first window before starting
-                        // device polling and backup discovery work.
+                        // device polling.
                         try? await Task.sleep(for: .milliseconds(750))
                         deviceVM.deviceManager.startPolling(interval: 4.0)
-                        backupVM.loadBackups()
                     }
                 }
                 .sheet(isPresented: showOnboarding) {
@@ -104,7 +104,7 @@ struct PhosphorApp: App {
                 Button("Backup Now") {
                     startBackupNow()
                 }
-                .disabled(deviceVM.selectedDevice == nil || backupVM.isCreating)
+                .disabled(deviceVM.selectedDevice == nil || backupVM.isCreating || backupVM.isLoadingBackups)
 
                 Button("Open Backup Folder") {
                     openBackupFolder()
@@ -169,6 +169,7 @@ struct PhosphorApp: App {
                 // device that is perfectly free.
                 .disabled(
                     deviceVM.selectedDevice == nil ||
+                    backupVM.isLoadingBackups ||
                     deviceVM.selectedDevice.map { backupVM.isBackupActive(for: $0.id) } == true
                 )
 
@@ -210,7 +211,7 @@ struct PhosphorApp: App {
     }
 
     private func startBackupNow() {
-        guard let device = deviceVM.selectedDevice, !backupVM.isCreating else { return }
+        guard let device = deviceVM.selectedDevice, !backupVM.isCreating, !backupVM.isLoadingBackups else { return }
         if hasResumableBackup(for: device) {
             selectedSection = .backups
             Task {
