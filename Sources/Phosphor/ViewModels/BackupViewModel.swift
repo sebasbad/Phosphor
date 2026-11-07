@@ -101,6 +101,13 @@ final class BackupViewModel: ObservableObject {
         /// Files already on disk when this resume started, from the pre-resume
         /// incomplete-backup stats. Real baseline for the resume phase detail.
         var resumeFileBaseline: Int?
+        /// Bytes already on disk when this resume started.
+        var resumeBytesBaseline: UInt64?
+        /// Target device's total used bytes (`totalDiskCapacity - availableDiskSpace`), queried independently for this backup.
+        var targetDeviceUsedBytes: UInt64?
+        /// Rolling samples of `(Date, sessionFraction)` once active transfer begins (`sessionFraction > 0.01`),
+        /// used to compute a coherent ETA unaffected by pre-transfer manifest reconciliation dead time.
+        var transferFractionSamples: [(date: Date, fraction: Double)] = []
         var isAwaitingPasscode: Bool = false
         var hasReceivedTransferProgress: Bool = false
         var hasNotifiedPasscodePrompt: Bool = false
@@ -845,44 +852,71 @@ final class BackupViewModel: ObservableObject {
             $0.isResume = isResume
             $0.resumeBaselineFraction = 0.0
             $0.resumeFileBaseline = nil
+            $0.resumeBytesBaseline = nil
+            $0.targetDeviceUsedBytes = nil
+            $0.transferFractionSamples = []
+            $0.eta = nil
             $0.progressText = isResume ? "Resuming..." : "Preparing..."
             $0.lastProgressUpdate = Date()
         }
         startObservability(udid: udid, isResume: isResume)
         startLivenessMonitor(udid: udid)
-        if isResume {
-            let requestDevice = request.device
-            resumeBaselineTasks[udid]?.cancel()
-            resumeBaselineTasks[udid] = Task { [weak self] in
+        let requestDevice = request.device
+        let knownDirSize = backups.first(where: { !$0.isArchivedSnapshot && ($0.udid == udid || $0.id == udid) && $0.sizeResolved && $0.size > 0 })?.size
+        resumeBaselineTasks[udid]?.cancel()
+        resumeBaselineTasks[udid] = Task { [weak self] in
+            // Always resolve the target device's own used bytes independently (from passed DeviceInfo or live lockdown disk_usage)
+            let deviceUsedFromInfo: UInt64? = {
+                guard let dev = requestDevice else { return nil }
+                if let total = dev.totalDiskCapacity, let avail = dev.availableDiskSpace, total > avail {
+                    return total - avail
+                }
+                if let totalData = dev.totalDataCapacity, let avail = dev.availableDiskSpace, totalData > avail {
+                    return totalData - avail
+                }
+                if let totalData = dev.totalDataCapacity, totalData > 0 {
+                    return totalData
+                }
+                return nil
+            }()
+            let resolvedDeviceUsed: UInt64?
+            if let deviceUsedFromInfo, deviceUsedFromInfo > 0 {
+                resolvedDeviceUsed = deviceUsedFromInfo
+            } else {
+                resolvedDeviceUsed = await BackupManager.fetchTargetDeviceUsedBytes(for: udid)
+            }
+            guard !Task.isCancelled, let self else { return }
+
+            if isResume {
                 let stats = await Task.detached(priority: .utility) {
-                    BackupManager.incompleteBackupStats(for: udid)
+                    BackupManager.incompleteBackupStats(for: udid, knownDirectorySize: knownDirSize)
                 }.value
-                guard !Task.isCancelled, let self else { return }
+                guard !Task.isCancelled else { return }
                 var baselineFraction: Double = 0.0
                 var resumeFileCount: Int?
+                var resumeBytesCount: UInt64?
                 if let stats {
                     resumeFileCount = stats.fileCount
-                    if let device = requestDevice, let calculatedFraction = stats.completionFraction(for: device) {
-                        // Accurately reflect preserved progress up to 99%
-                        baselineFraction = min(max(calculatedFraction, 0.01), 0.99)
-                    } else if let priorBackupSize = self.backups.first(where: { $0.udid == udid && $0.size > 0 })?.size, priorBackupSize > 0 {
-                        // Compare against historical completed backup size for this device
-                        let fraction = Double(stats.totalBytes) / Double(priorBackupSize)
+                    resumeBytesCount = stats.totalBytes
+                    if let targetUsed = resolvedDeviceUsed, targetUsed > 0 {
+                        // Self-contained ratio of this backup's on-disk bytes against the target device's own used storage
+                        let fraction = Double(stats.totalBytes) / Double(targetUsed)
                         baselineFraction = min(max(fraction, 0.01), 0.99)
-                    } else if stats.totalBytes > 1_000_000_000 {
-                        // Fallback when device capacity is unknown: estimate against typical device backup payload (~200 GB)
-                        baselineFraction = min(Double(stats.totalBytes) / 200_000_000_000.0, 0.95)
-                        baselineFraction = max(baselineFraction, 0.05)
+                    } else if let device = requestDevice, let calculatedFraction = stats.completionFraction(for: device) {
+                        baselineFraction = min(max(calculatedFraction, 0.01), 0.99)
                     } else if stats.fileCount > 5000 {
-                        baselineFraction = min(Double(stats.fileCount) / 350_000.0, 0.90)
+                        // Only used when the device is unreachable for disk_usage queries
+                        baselineFraction = min(Double(stats.fileCount) / 450_000.0, 0.90)
                         baselineFraction = max(baselineFraction, 0.05)
                     } else {
                         baselineFraction = 0.0
                     }
                 }
                 self.updateActivity(udid: udid) {
+                    $0.targetDeviceUsedBytes = resolvedDeviceUsed
                     $0.resumeBaselineFraction = baselineFraction
                     $0.resumeFileBaseline = resumeFileCount
+                    $0.resumeBytesBaseline = resumeBytesCount
                     if let coordinator = $0.observabilityCoordinator {
                         var context = PhaseContext()
                         context.filesResumed = resumeFileCount
@@ -911,6 +945,10 @@ final class BackupViewModel: ObservableObject {
                     }
                 }
                 self.refreshLegacyProgressState()
+            } else {
+                self.updateActivity(udid: udid) {
+                    $0.targetDeviceUsedBytes = resolvedDeviceUsed
+                }
             }
         }
         refreshLegacyProgressState()
@@ -1255,12 +1293,20 @@ final class BackupViewModel: ObservableObject {
                     // Transient 100% on metadata preparation phase - do not jump UI to 100%
                 } else {
                     let current = activity.progressFraction ?? 0.0
-                    activity.progressFraction = max(current, details.fraction)
+                    let next = max(current, details.fraction)
+                    activity.progressFraction = next
+                    Self.recordTransferSample(on: &activity, sessionFraction: next)
                 }
-                if let eta = details.eta { activity.eta = eta }
                 if let speed = details.speed { activity.speed = speed }
                 if let t = details.transferred { transferredBytes = Self.parseByteCount(t) }
                 if let t = details.total { totalBytes = Self.parseByteCount(t) }
+                activity.eta = Self.computeCoherentETA(
+                    for: activity,
+                    rawTqdmEta: details.eta,
+                    speedBytesPerSec: activity.speed.flatMap(Self.parseSpeedToBytesPerSecond),
+                    transferredBytes: transferredBytes,
+                    totalBytes: totalBytes
+                )
             } else if let pct = PyMobileDevice.parseProgress(from: text) {
                 parsedProgress = true
                 if pct > 0.001 {
@@ -1271,14 +1317,32 @@ final class BackupViewModel: ObservableObject {
                     // Transient subphase
                 } else {
                     let current = activity.progressFraction ?? 0.0
-                    activity.progressFraction = max(current, pct)
+                    let next = max(current, pct)
+                    activity.progressFraction = next
+                    Self.recordTransferSample(on: &activity, sessionFraction: next)
                 }
+                activity.eta = Self.computeCoherentETA(
+                    for: activity,
+                    rawTqdmEta: nil,
+                    speedBytesPerSec: activity.speed.flatMap(Self.parseSpeedToBytesPerSecond),
+                    transferredBytes: transferredBytes,
+                    totalBytes: totalBytes
+                )
             } else if manager.backupPercent > 0 {
                 parsedProgress = true
                 activity.hasReceivedTransferProgress = true
                 activity.isAwaitingPasscode = false
                 let current = activity.progressFraction ?? 0.0
-                activity.progressFraction = max(current, manager.backupPercent)
+                let next = max(current, manager.backupPercent)
+                activity.progressFraction = next
+                Self.recordTransferSample(on: &activity, sessionFraction: next)
+                activity.eta = Self.computeCoherentETA(
+                    for: activity,
+                    rawTqdmEta: nil,
+                    speedBytesPerSec: activity.speed.flatMap(Self.parseSpeedToBytesPerSecond),
+                    transferredBytes: transferredBytes,
+                    totalBytes: totalBytes
+                )
             }
 
             // Detect phase signals emitted by BackupManager
@@ -1388,6 +1452,94 @@ final class BackupViewModel: ObservableObject {
             else if token.hasSuffix("s"), let v = Double(token.dropLast(1)) { total += v }
         }
         return total > 0 ? total : nil
+    }
+
+    private static func formatEtaSeconds(_ seconds: TimeInterval) -> String {
+        let clamped = max(1, Int(seconds.rounded()))
+        let h = clamped / 3600
+        let m = (clamped % 3600) / 60
+        let s = clamped % 60
+        if h > 0 { return "\(h)h \(m)m \(s)s" }
+        if m > 0 { return "\(m)m \(s)s" }
+        return "\(s)s"
+    }
+
+    /// Records a timestamped sample of `sessionFraction` once active payload transfer begins (`> 0.01`),
+    /// pruning samples older than 180 seconds so velocity reflects current transfer speed rather than
+    /// pre-transfer manifest reconciliation dead time.
+    private static func recordTransferSample(on activity: inout BackupActivity, sessionFraction: Double) {
+        guard sessionFraction > 0.005 else { return }
+        let now = Date()
+        if let last = activity.transferFractionSamples.last {
+            // Only append when fraction advances or at least 2s elapsed
+            if sessionFraction > last.fraction || now.timeIntervalSince(last.date) >= 2.0 {
+                activity.transferFractionSamples.append((now, sessionFraction))
+            }
+        } else {
+            activity.transferFractionSamples.append((now, sessionFraction))
+        }
+        let cutoff = now.addingTimeInterval(-180)
+        if activity.transferFractionSamples.count > 2 {
+            activity.transferFractionSamples.removeAll { $0.date < cutoff }
+        }
+    }
+
+    /// Computes a coherent, self-contained ETA for `activity` based on its own active transfer velocity
+    /// and/or known remaining bytes, eliminating `tqdm`'s distorted cumulative average ETA caused by
+    /// pre-transfer manifest scanning.
+    private static func computeCoherentETA(
+        for activity: BackupActivity,
+        rawTqdmEta: String?,
+        speedBytesPerSec: Double?,
+        transferredBytes: Int64?,
+        totalBytes: Int64?
+    ) -> String? {
+        guard let sessionFraction = activity.progressFraction, sessionFraction < 0.995 else {
+            return nil
+        }
+
+        // 1. If explicit byte counts and byte speed are present, compute directly from remaining bytes
+        if let speed = speedBytesPerSec, speed > 0 {
+            if let total = totalBytes, let transferred = transferredBytes, total > transferred {
+                let remaining = Double(total - transferred)
+                return formatEtaSeconds(remaining / speed)
+            }
+            if let targetUsed = activity.targetDeviceUsedBytes {
+                let baselineBytes = activity.isResume ? (activity.resumeBytesBaseline ?? 0) : 0
+                if targetUsed > baselineBytes {
+                    let sessionTargetBytes = Double(targetUsed - baselineBytes)
+                    let remainingSessionBytes = sessionTargetBytes * max(0.0, 1.0 - sessionFraction)
+                    if remainingSessionBytes > 0 {
+                        return formatEtaSeconds(remainingSessionBytes / speed)
+                    }
+                }
+            }
+        }
+
+        // 2. Compute from rolling active session-fraction velocity (ignores pre-transfer dead time at 0-1%)
+        if let first = activity.transferFractionSamples.first,
+           let last = activity.transferFractionSamples.last {
+            let dt = last.date.timeIntervalSince(first.date)
+            let df = last.fraction - first.fraction
+            if dt >= 4.0, df >= 0.003 {
+                let ratePerSec = df / dt
+                let remainingFraction = max(0.0, 1.0 - sessionFraction)
+                let estSeconds = remainingFraction / ratePerSec
+                if estSeconds > 0, estSeconds < 86_400 * 3 {
+                    return formatEtaSeconds(estSeconds)
+                }
+            }
+        }
+
+        // 3. Before active transfer velocity is established:
+        // On a resumed backup (or while sessionFraction <= 3%), suppress tqdm's cumulative ETA because
+        // tqdm divides by total time since process launch (including PIN wait + 380k-file manifest diffing),
+        // which produces absurd multi-hour ETAs (e.g. 14h 27m at 95%).
+        if activity.isResume || sessionFraction <= 0.03 {
+            return nil
+        }
+
+        return rawTqdmEta
     }
 
     private func startFinalizationWatchdogIfNeeded(udid: String) {

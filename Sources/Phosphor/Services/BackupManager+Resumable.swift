@@ -268,61 +268,72 @@ extension BackupManager {
         return manifest.integrityReport()
     }
 
-    nonisolated static func incompleteBackupStats(for udid: String, in directory: String? = nil) -> IncompleteBackupStats? {
+    nonisolated static func incompleteBackupStats(for udid: String, in directory: String? = nil, knownDirectorySize: UInt64? = nil) -> IncompleteBackupStats? {
         let fm = FileManager.default
         let path = backupPath(for: udid, in: directory)
         var isDir: ObjCBool = false
         guard fm.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
 
-        // Fast path: if Manifest.db is present and readable via SQLite, query count and total size in milliseconds
-        // instead of crawling hundreds of thousands of files across an external drive.
-        let manifestDbPath = (path as NSString).appendingPathComponent("Manifest.db")
-        if fm.fileExists(atPath: manifestDbPath),
-           let reader = try? SQLiteReader(path: manifestDbPath) {
-            let countQuery = "SELECT count(*) FROM Files WHERE flags = 1"
-            let rowCount: Int? = try? reader.scalar(countQuery)
-            if let rowCount, rowCount > 0 {
-                let modDate = (try? fm.attributesOfItem(atPath: manifestDbPath)[.modificationDate]) as? Date
-                // Try to get total file size if recorded, otherwise estimate ~100KB per file
-                let sizeQuery = "SELECT sum(length(file)) FROM Files WHERE flags = 1"
-                let metadataBytes: Int? = try? reader.scalar(sizeQuery)
-                let estimatedBytes = UInt64(metadataBytes ?? (rowCount * 100_000))
-                return IncompleteBackupStats(fileCount: rowCount, totalBytes: estimatedBytes, lastModified: modDate)
-            }
+        let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
+        var snapshotExists = false
+        if fm.fileExists(atPath: snapshotPath, isDirectory: &isDir), isDir.boolValue {
+            snapshotExists = true
         }
 
-        let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
-        let targetDir = fm.fileExists(atPath: snapshotPath, isDirectory: &isDir) && isDir.boolValue ? snapshotPath : path
+        // Scan both Snapshot/ (if present) and root path for 2-char hex buckets (00..ff)
+        // so partially consolidated backups count all transferred files across both locations.
+        var candidateDirs: [String] = []
+        if snapshotExists { candidateDirs.append(snapshotPath) }
+        candidateDirs.append(path)
 
-        // High-performance APFS/directory scan:
-        // Query bucket subdirectories. In APFS/POSIX, directory stat `.st_nlink`
-        // indicates (entries + 2). Summing `st_nlink - 2` across the 256 hex buckets (00..ff)
-        // calculates the exact file count in milliseconds without enumerating hundreds of
-        // thousands of individual file nodes.
         var count = 0
         var totalBytes: UInt64 = 0
         var latestDate: Date?
+        var bucketPaths: [String] = []
 
-        guard let subdirs = try? fm.contentsOfDirectory(atPath: targetDir) else { return nil }
-        let hexBuckets = subdirs.filter { $0.count == 2 || $0.count == 40 }
-        for sub in hexBuckets {
-            if Task.isCancelled { return nil }
-            let subPath = (targetDir as NSString).appendingPathComponent(sub)
-            var st = stat()
-            if stat(subPath, &st) == 0 {
-                let bucketFiles = max(0, Int(st.st_nlink) - 2)
-                count += bucketFiles
-                let mod = Date(timeIntervalSince1970: TimeInterval(st.st_mtimespec.tv_sec))
-                if latestDate == nil || mod > latestDate! {
-                    latestDate = mod
+        for dir in candidateDirs {
+            guard let subdirs = try? fm.contentsOfDirectory(atPath: dir) else { continue }
+            let hexBuckets = subdirs.filter { $0.count == 2 && $0.allSatisfy(\.isHexDigit) }.sorted()
+            for sub in hexBuckets {
+                if Task.isCancelled { return nil }
+                let subPath = (dir as NSString).appendingPathComponent(sub)
+                var st = stat()
+                if stat(subPath, &st) == 0, (st.st_mode & S_IFMT) == S_IFDIR {
+                    let bucketFiles = max(0, Int(st.st_nlink) - 2)
+                    if bucketFiles > 0 {
+                        count += bucketFiles
+                        bucketPaths.append(subPath)
+                    }
+                    let mod = Date(timeIntervalSince1970: TimeInterval(st.st_mtimespec.tv_sec))
+                    if latestDate == nil || mod > latestDate! {
+                        latestDate = mod
+                    }
                 }
             }
         }
 
-        // Derive or sample bytes:
-        // Each iOS backup file averages ~700 KB. If files exist, estimate or sample:
+        // Fallback to Manifest.db file count if no hex bucket links were found
+        if count == 0 {
+            for candidateManifest in [
+                (snapshotPath as NSString).appendingPathComponent("Manifest.db"),
+                (path as NSString).appendingPathComponent("Manifest.db")
+            ] {
+                if fm.fileExists(atPath: candidateManifest),
+                   let reader = try? SQLiteReader(path: candidateManifest),
+                   let rowCount: Int = try? reader.scalar("SELECT count(*) FROM Files WHERE flags = 1"),
+                   rowCount > 0 {
+                    count = rowCount
+                    if let modDate = (try? fm.attributesOfItem(atPath: candidateManifest)[.modificationDate]) as? Date {
+                        if latestDate == nil || modDate > latestDate! {
+                            latestDate = modDate
+                        }
+                    }
+                    break
+                }
+            }
+        }
+
         if count > 0 {
-            // Check Info.plist in parent or target directory if available
             let infoPath = (path as NSString).appendingPathComponent("Info.plist")
             if let attrs = try? fm.attributesOfItem(atPath: infoPath),
                let mod = attrs[.modificationDate] as? Date {
@@ -330,27 +341,36 @@ extension BackupManager {
                     latestDate = mod
                 }
             }
-            // Sample up to 4 deterministic buckets to derive accurate average file size
-            let sampleCount = min(4, hexBuckets.count)
-            var sampleFiles = 0
-            var sampleBytes: UInt64 = 0
-            for i in 0..<sampleCount {
-                let sub = hexBuckets[i * (hexBuckets.count / sampleCount)]
-                let subPath = (targetDir as NSString).appendingPathComponent(sub)
-                if let files = try? fm.contentsOfDirectory(atPath: subPath) {
-                    for f in files.prefix(100) {
-                        let fp = (subPath as NSString).appendingPathComponent(f)
-                        if let attrs = try? fm.attributesOfItem(atPath: fp),
-                           let s = attrs[.size] as? UInt64 {
-                            sampleFiles += 1
-                            sampleBytes += s
+
+            if let known = knownDirectorySize, known > 0 {
+                totalBytes = known
+            } else if !bucketPaths.isEmpty {
+                // Sample up to 16 evenly spaced buckets (up to 250 files each) for an accurate,
+                // self-contained byte estimate without blocking on 400k+ stat() calls.
+                let sampleCount = min(16, bucketPaths.count)
+                var sampleFiles = 0
+                var sampleBytes: UInt64 = 0
+                for i in 0..<sampleCount {
+                    if Task.isCancelled { return nil }
+                    let idx = (i * bucketPaths.count) / sampleCount
+                    let subPath = bucketPaths[idx]
+                    if let files = try? fm.contentsOfDirectory(atPath: subPath) {
+                        for f in files.prefix(250) {
+                            let fp = (subPath as NSString).appendingPathComponent(f)
+                            var fst = stat()
+                            if stat(fp, &fst) == 0, (fst.st_mode & S_IFMT) == S_IFREG {
+                                sampleFiles += 1
+                                sampleBytes += UInt64(max(0, fst.st_size))
+                            }
                         }
                     }
                 }
-            }
-            if sampleFiles > 0 {
-                let avg = sampleBytes / UInt64(sampleFiles)
-                totalBytes = UInt64(count) * avg
+                if sampleFiles > 0 {
+                    let avg = sampleBytes / UInt64(sampleFiles)
+                    totalBytes = UInt64(count) * avg
+                } else {
+                    totalBytes = UInt64(count) * 700_000
+                }
             } else {
                 totalBytes = UInt64(count) * 700_000
             }
@@ -358,6 +378,35 @@ extension BackupManager {
 
         guard count > 0 || totalBytes > 0 else { return nil }
         return IncompleteBackupStats(fileCount: count, totalBytes: totalBytes, lastModified: latestDate)
+    }
+
+    /// Queries the target device's live disk usage (`TotalDiskCapacity`, `AmountDataAvailable`, `TotalDataCapacity`)
+    /// directly via lockdown so a backup job can independently calculate its exact target size and completion fraction
+    /// even when the passed-in `DeviceInfo` did not have disk capacity populated.
+    nonisolated static func fetchTargetDeviceUsedBytes(for udid: String) async -> UInt64? {
+        var diskInfo = await PyMobileDevice.diskUsage(udid: udid)
+        if diskInfo.isEmpty {
+            let result = await Shell.runAsync("ideviceinfo", arguments: ["-u", udid, "-q", "com.apple.disk_usage"], timeout: 8)
+            if result.succeeded {
+                diskInfo = result.output.parseKeyValuePairs()
+            }
+        }
+        if let total = diskInfo["TotalDiskCapacity"].flatMap(UInt64.init),
+           let available = diskInfo["AmountDataAvailable"].flatMap(UInt64.init),
+           total > available {
+            let used = total - available
+            if used > 0 { return used }
+        }
+        if let totalData = diskInfo["TotalDataCapacity"].flatMap(UInt64.init),
+           let available = diskInfo["AmountDataAvailable"].flatMap(UInt64.init),
+           totalData > available {
+            let usedData: UInt64 = totalData - available
+            return usedData
+        }
+        if let totalData = diskInfo["TotalDataCapacity"].flatMap(UInt64.init), totalData > 0 {
+            return totalData
+        }
+        return nil
     }
 
     /// Returns the most recent file modification timestamp inside the active backup directory

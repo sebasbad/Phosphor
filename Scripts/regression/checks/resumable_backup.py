@@ -177,6 +177,22 @@ def test_secondary_surfaces_and_data_tabs_sync_with_resumable_and_archived_backu
     assert_contains(app, "backupVM.isLoadingBackups", "PhosphorApp menu bar must disable Backup Now while scanning the backup directory")
 
 
+def test_self_contained_per_backup_progress_and_coherent_eta(root: Path) -> None:
+    pmd = read(root, "Sources/Phosphor/Utilities/PyMobileDevice.swift")
+    dm = read(root, "Sources/Phosphor/Services/DeviceManager.swift")
+    resumable = read(root, "Sources/Phosphor/Services/BackupManager+Resumable.swift")
+    vm = read(root, "Sources/Phosphor/ViewModels/BackupViewModel.swift")
+
+    assert_contains(pmd, 'static func diskUsage(udid: String? = nil)', "PyMobileDevice must query com.apple.disk_usage domain")
+    assert_contains(dm, "cachedDiskInfo(udid: udid", "DeviceManager must populate disk capacity from com.apple.disk_usage when missing from lockdown info")
+    assert_contains(resumable, "static func fetchTargetDeviceUsedBytes(for udid: String)", "BackupManager must independently resolve target device used bytes")
+    assert "200_000_000_000" not in vm, "BackupViewModel must not divide by a hardcoded 200 GB fallback cap"
+    assert "priorBackupSize" not in vm, "Each backup must calculate its baseline independently without relying on other backups"
+    assert_contains(vm, "static func computeCoherentETA(", "BackupViewModel must compute coherent ETA from active session transfer velocity")
+    assert_contains(vm, "static func recordTransferSample(", "BackupViewModel must record active transfer fraction samples after initial manifest diffing")
+
+
+
 
 
 
