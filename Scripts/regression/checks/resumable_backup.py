@@ -211,7 +211,13 @@ def test_self_contained_per_backup_progress_and_coherent_eta(root: Path) -> None
     assert_contains(vm, "guard !isTransitioning, tickCount % 5 == 1 else { continue }", "Liveness monitor must republish 1s UI ticks before any disk I/O and skip disk scans while pausing")
     assert_contains(vm, "let shouldSampleDomain = (tickCount % 30 == 1)", "Liveness monitor must throttle SQLite Manifest.db domain sampling so it does not contend with backup disk writes")
     manager = read(root, "Sources/Phosphor/Services/BackupManager.swift")
+    shell = read(root, "Sources/Phosphor/Utilities/Shell.swift")
     assert_contains(manager, "patchManifest: full && (onlyRegex != nil && !onlyRegex!.isEmpty)", "patchManifest must only be enabled on full backups because pymobiledevice3 forces full=True when patch_manifest=True")
+    assert_contains(shell, "proc_pid_rusage(processIdentifier, RUSAGE_INFO_V4, rusagePtr)", "Shell.ManagedProcess must query kernel ri_diskio_byteswritten via proc_pid_rusage")
+    assert_contains(manager, "var activeProcessBytesWritten: UInt64", "BackupManager must expose activeProcessBytesWritten from ManagedProcess")
+    assert_contains(vm, "var sessionBytesWritten: UInt64", "BackupActivity must track sessionBytesWritten from kernel I/O accounting")
+    assert_contains(vm, "private static func computeKernelByteSpeed(", "BackupViewModel must compute live transfer speed from kernel byte write samples")
+
 
 
 
