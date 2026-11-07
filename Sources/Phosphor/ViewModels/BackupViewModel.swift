@@ -105,6 +105,13 @@ final class BackupViewModel: ObservableObject {
         var resumeBytesBaseline: UInt64?
         /// Target device's total used bytes (`totalDiskCapacity - availableDiskSpace`), queried independently for this backup.
         var targetDeviceUsedBytes: UInt64?
+        /// Total bytes written to disk by the active backup process in this session (`proc_pid_rusage` `ri_diskio_byteswritten`).
+        var sessionBytesWritten: UInt64 = 0
+        /// Rolling 1-second samples of `(Date, sessionBytesWritten)` from kernel process I/O accounting,
+        /// used to compute live `MB/s` transfer speed and true byte-based ETA without relying on `tqdm` integer `%` steps.
+        var byteWriteSamples: [(date: Date, bytes: UInt64)] = []
+        /// Last `sessionBytesWritten` value at which the backup row's displayed on-disk size was refreshed.
+        var lastRowSizeUpdateBytes: UInt64 = 0
         /// Rolling samples of `(Date, sessionFraction)` once active transfer begins (`sessionFraction > 0.01`),
         /// used to compute a coherent ETA unaffected by pre-transfer manifest reconciliation dead time.
         var transferFractionSamples: [(date: Date, fraction: Double)] = []
@@ -325,17 +332,32 @@ final class BackupViewModel: ObservableObject {
                 return 0.99
             }
             guard let progressFraction else {
+                if let targetUsed = targetDeviceUsedBytes, targetUsed > 0, sessionBytesWritten > 0 {
+                    let currentOnDisk = (isResume ? (resumeBytesBaseline ?? 0) : 0) + sessionBytesWritten
+                    let byteFraction = Double(currentOnDisk) / Double(targetUsed)
+                    return min(max(byteFraction, resumeBaselineFraction), 0.99)
+                }
                 return resumeBaselineFraction > 0 ? resumeBaselineFraction : 0.0
             }
             if isResume && resumeBaselineFraction > 0 {
                 // Compute progress over total: baseline + remaining * sessionFraction
                 let remainingFraction = 1.0 - resumeBaselineFraction
-                let totalFraction = resumeBaselineFraction + (remainingFraction * progressFraction)
+                var totalFraction = resumeBaselineFraction + (remainingFraction * progressFraction)
+                if let targetUsed = targetDeviceUsedBytes, targetUsed > 0, sessionBytesWritten > 0 {
+                    let currentOnDisk = (resumeBytesBaseline ?? 0) + sessionBytesWritten
+                    let byteFraction = Double(currentOnDisk) / Double(targetUsed)
+                    totalFraction = max(totalFraction, byteFraction)
+                }
                 let bounded = min(max(totalFraction, resumeBaselineFraction), 1.0)
                 // Cap in-progress running state at 0.99 so 100% is only shown when state becomes .completed
                 return state == .completed ? 1.0 : min(bounded, 0.99)
             }
-            let bounded = min(max(progressFraction, 0.0), 1.0)
+            var rawFraction = progressFraction
+            if let targetUsed = targetDeviceUsedBytes, targetUsed > 0, sessionBytesWritten > 0 {
+                let byteFraction = Double(sessionBytesWritten) / Double(targetUsed)
+                rawFraction = max(rawFraction, byteFraction)
+            }
+            let bounded = min(max(rawFraction, 0.0), 1.0)
             return state == .completed ? 1.0 : min(bounded, 0.99)
         }
 
@@ -853,6 +875,10 @@ final class BackupViewModel: ObservableObject {
         lines.append("Last progress update: \(Int(Date().timeIntervalSince(activity.lastProgressUpdate)))s ago")
         lines.append("Stalled (no progress for 5+ min): \(activity.isStalled ? "yes" : "no")")
         lines.append("Quiet (waiting for device >30s): \(activity.isQuiet ? "yes" : "no")")
+        if activity.sessionBytesWritten > 0 {
+            let formattedWritten = ByteCountFormatter.string(fromByteCount: Int64(activity.sessionBytesWritten), countStyle: .file)
+            lines.append("Session bytes written (kernel I/O): \(formattedWritten)")
+        }
         if let speed = activity.speed { lines.append("Last speed: \(speed)") }
         if let eta = activity.eta { lines.append("Last ETA: \(eta)") }
         if let error = activity.errorMessage { lines.append("Error: \(error)") }
@@ -947,6 +973,9 @@ final class BackupViewModel: ObservableObject {
             $0.resumeFileBaseline = nil
             $0.resumeBytesBaseline = nil
             $0.targetDeviceUsedBytes = nil
+            $0.sessionBytesWritten = 0
+            $0.byteWriteSamples = []
+            $0.lastRowSizeUpdateBytes = 0
             $0.transferFractionSamples = []
             $0.transferAnchorSample = nil
             $0.lastComputedEtaSeconds = nil
@@ -1203,13 +1232,94 @@ final class BackupViewModel: ObservableObject {
                 tickCount += 1
 
                 // Immediately republish on every 1-second tick BEFORE any blocking disk/lsof I/O
-                // so transition timers ("Pausing… (1s)", "(2s)"), elapsed time, and ETA countdown
+                // so transition timers ("Pausing… (1s)", "(2s)"), elapsed time, live speed, and ETA countdown
                 // tick smoothly in the UI without freezing at (0s).
+                let now = Date()
+                let writtenBytes = self.backupManagers[udid]?.activeProcessBytesWritten ?? 0
                 var isTransitioning = false
+                var updatedOnDiskSize: UInt64?
                 self.updateActivity(udid: udid) {
                     $0.processAlive = true
-                    $0.currentTick = Date()
+                    $0.currentTick = now
                     isTransitioning = ($0.transition != nil)
+                    guard !isTransitioning else { return }
+
+                    if writtenBytes > 0 {
+                        if writtenBytes > $0.sessionBytesWritten {
+                            $0.lastProgressUpdate = now
+                            if now > $0.startTime.addingTimeInterval(1.0) {
+                                $0.hasReceivedTransferProgress = true
+                                $0.isAwaitingPasscode = false
+                            }
+                        }
+                        $0.sessionBytesWritten = writtenBytes
+                        Self.recordKernelByteSample(on: &$0, bytesWritten: writtenBytes, now: now)
+
+                        // Compute 15-second rolling byte write rate for live UI speed ("8.7 MB/s")
+                        let liveRate = Self.computeKernelByteSpeed(for: $0, windowSeconds: 15.0, now: now)
+                        if let liveRate, liveRate > 0 {
+                            $0.speed = self.formatBytesPerSecond(liveRate)
+                        }
+
+                        // Recompute coherent ETA on every 1s tick using exact kernel byte accounting
+                        Self.updateCoherentETA(
+                            on: &$0,
+                            rawTqdmEta: nil,
+                            speedBytesPerSec: liveRate ?? $0.speed.flatMap(Self.parseSpeedToBytesPerSecond),
+                            transferredBytes: nil,
+                            totalBytes: nil
+                        )
+
+                        if let coordinator = $0.observabilityCoordinator, let liveRate, liveRate > 0 {
+                            let baseline = $0.isResume ? ($0.resumeBytesBaseline ?? 0) : 0
+                            let currentOnDisk = Int64(baseline + writtenBytes)
+                            let targetTotal = $0.targetDeviceUsedBytes.map { Int64($0) }
+                            var context = PhaseContext()
+                            context.filesResumed = $0.resumeFileBaseline
+                            context.resumeBaselineFraction = $0.resumeBaselineFraction > 0 ? $0.resumeBaselineFraction : nil
+                            context.sanitizationScanned = $0.sanitizationScanned
+                            context.sanitizationCleaned = $0.sanitizationCleaned
+                            context.sanitizationWalCheckpointed = $0.sanitizationWalCheckpointed
+                            context.fallbackReason = $0.fallbackReason
+                            context.currentDomain = $0.currentDomain
+                            coordinator.updateMetrics(
+                                phase: $0.observabilityPhase,
+                                progressFraction: $0.progressFraction,
+                                bytesTransferred: currentOnDisk,
+                                filesTransferred: nil,
+                                totalBytes: targetTotal,
+                                totalFiles: nil,
+                                currentFile: nil,
+                                speedBytesPerSec: liveRate,
+                                speedFilesPerSec: nil,
+                                eta: $0.eta.flatMap(Self.parseEtaToSeconds),
+                                isFinalizing: $0.isFinalizing,
+                                finalizationMetrics: $0.finalizationMetrics,
+                                context: context
+                            )
+                            $0.phaseMetrics = coordinator.phaseMetrics
+                            $0.predictiveETA = coordinator.predictiveETA
+                            $0.throughputStats = coordinator.throughputStats
+                            $0.throughputTrend = coordinator.throughputTrend
+                        }
+
+                        // Periodically refresh the backup row's displayed on-disk size (every ~25 MB written)
+                        if writtenBytes >= $0.lastRowSizeUpdateBytes + 25_000_000 {
+                            $0.lastRowSizeUpdateBytes = writtenBytes
+                            let baseline = $0.isResume ? ($0.resumeBytesBaseline ?? 0) : 0
+                            updatedOnDiskSize = baseline + writtenBytes
+                        }
+                    }
+                }
+                if let newSize = updatedOnDiskSize {
+                    let backupPath = BackupManager.backupPath(for: udid)
+                    if let idx = self.backups.firstIndex(where: { !$0.isArchivedSnapshot && ($0.udid == udid || $0.id == udid) }) {
+                        if newSize > self.backups[idx].size {
+                            self.resolvedSizesByPath[backupPath] = (newSize, self.backups[idx].lastBackupDate)
+                            self.backups[idx] = self.backups[idx].withSize(newSize)
+                            self.backupManager.backups = self.backups
+                        }
+                    }
                 }
                 self.refreshLegacyProgressState()
 
@@ -1529,10 +1639,10 @@ final class BackupViewModel: ObservableObject {
         refreshLegacyProgressState()
     }
 
-    /// Parse a tqdm speed string ("39.5MB/s", "1.2GB/s") into bytes/sec.
+    /// Parse a speed string ("39.5MB/s", "8,7 MB/s", "1.2GB/s") into bytes/sec.
     /// "it/s" is iteration rate, not a byte rate, so it returns nil.
     private static func parseSpeedToBytesPerSecond(_ s: String) -> Double? {
-        let trimmed = s.trimmingCharacters(in: .whitespaces)
+        let trimmed = s.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
         guard !trimmed.lowercased().contains("it/s") else { return nil }
         guard let regex = try? NSRegularExpression(pattern: #"^([\d.]+)\s*([kKmMgG]?)[bB]?/?s"#) else { return nil }
         guard let m = regex.firstMatch(in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)) else { return nil }
@@ -1587,8 +1697,35 @@ final class BackupViewModel: ObservableObject {
         return "\(s)s"
     }
 
+    /// Records a 1-second sample of kernel `ri_diskio_byteswritten` (`proc_pid_rusage`), keeping a 10-minute
+    /// rolling window of active payload writes so live `MB/s` and byte-based ETA are immune to `tqdm` integer `%` quantization.
+    private static func recordKernelByteSample(on activity: inout BackupActivity, bytesWritten: UInt64, now: Date) {
+        guard bytesWritten > 0 else { return }
+        activity.byteWriteSamples.append((now, bytesWritten))
+        let cutoff = now.addingTimeInterval(-600) // 10-minute rolling window
+        if activity.byteWriteSamples.count > 2 {
+            activity.byteWriteSamples.removeAll { $0.date < cutoff }
+        }
+    }
+
+    /// Computes rolling byte write throughput (`bytes/sec`) over `windowSeconds` from `byteWriteSamples`.
+    private static func computeKernelByteSpeed(
+        for activity: BackupActivity,
+        windowSeconds: TimeInterval,
+        now: Date
+    ) -> Double? {
+        guard let last = activity.byteWriteSamples.last else { return nil }
+        let targetStart = now.addingTimeInterval(-windowSeconds)
+        // Find the sample closest to `targetStart` (or the oldest sample if window hasn't filled yet)
+        let ref = activity.byteWriteSamples.first(where: { $0.date >= targetStart }) ?? activity.byteWriteSamples.first
+        guard let ref, last.bytes > ref.bytes else { return nil }
+        let dt = last.date.timeIntervalSince(ref.date)
+        guard dt >= 1.5 else { return nil }
+        return Double(last.bytes - ref.bytes) / dt
+    }
+
     /// Records a timestamped sample of `sessionFraction` once active payload transfer begins (`> 0.005`),
-    /// retaining `transferAnchorSample` and a 30-minute rolling window of distinct percentage step transitions
+    /// retaining `transferAnchorSample` and a 2-hour rolling window of distinct percentage step transitions
     /// so velocity remains stable across multi-minute integer percentage steps on 200+ GB backups.
     private static func recordTransferSample(on activity: inout BackupActivity, sessionFraction: Double) {
         guard sessionFraction > 0.005 else { return }
@@ -1597,15 +1734,11 @@ final class BackupViewModel: ObservableObject {
             activity.transferAnchorSample = (now, sessionFraction)
         }
         if let last = activity.transferFractionSamples.last {
-            // Record a new sample when the percentage actually advances, or update the anchor if we were still at the first value.
-            // Recording only on percentage transitions prevents 900 identical-fraction samples from pushing out the previous
-            // percentage tick when a single 1% step takes >15 minutes on a 1 TB backup.
+            // Only append when the percentage actually advances. Never overwrite `transferFractionSamples[0]`'s timestamp
+            // while `sessionFraction` stays at the same integer percentage, otherwise the elapsed time for a 6-minute `1% -> 2%`
+            // step gets collapsed to the last few seconds before `2%` arrives.
             if sessionFraction > last.fraction + 0.0005 {
                 activity.transferFractionSamples.append((now, sessionFraction))
-            } else if activity.transferFractionSamples.count == 1 {
-                // Keep the initial baseline timestamp fresh until the first real percentage advance arrives
-                activity.transferFractionSamples[0] = (now, sessionFraction)
-                activity.transferAnchorSample = (now, sessionFraction)
             }
         } else {
             activity.transferFractionSamples.append((now, sessionFraction))
@@ -1651,9 +1784,9 @@ final class BackupViewModel: ObservableObject {
         }
     }
 
-    /// Computes a coherent, self-contained ETA for `activity` based on its own active transfer velocity
-    /// and/or known remaining bytes, eliminating `tqdm`'s distorted cumulative average ETA caused by
-    /// pre-transfer manifest scanning.
+    /// Computes a coherent, self-contained ETA for `activity` based on first-principles kernel byte accounting
+    /// (`remainingBytes / rollingBytesPerSecond`), falling back to session-fraction velocity only when byte totals
+    /// are unavailable.
     private static func computeCoherentETA(
         for activity: BackupActivity,
         rawTqdmEta: String?,
@@ -1661,11 +1794,39 @@ final class BackupViewModel: ObservableObject {
         transferredBytes: Int64?,
         totalBytes: Int64?
     ) -> String? {
+        if let sessionFraction = activity.progressFraction, sessionFraction >= 0.995 {
+            return nil
+        }
+
+        // 1. First-principles kernel byte-write ETA:
+        //    remainingBytes = targetDeviceUsedBytes - (resumeBytesBaseline + sessionBytesWritten)
+        //    divided by the 10-minute rolling kernel byte write rate (`byteWriteSamples`).
+        if let targetUsed = activity.targetDeviceUsedBytes,
+           activity.sessionBytesWritten > 0,
+           let firstSample = activity.byteWriteSamples.first,
+           let lastSample = activity.byteWriteSamples.last {
+            let baselineBytes = activity.isResume ? (activity.resumeBytesBaseline ?? 0) : 0
+            let currentOnDisk = baselineBytes + activity.sessionBytesWritten
+            if targetUsed > currentOnDisk {
+                let dt = lastSample.date.timeIntervalSince(firstSample.date)
+                let dBytes = lastSample.bytes > firstSample.bytes ? (lastSample.bytes - firstSample.bytes) : 0
+                // Require at least 5 seconds and 5 MB of active payload writes in the rolling window
+                if dt >= 5.0, dBytes >= 5_000_000 {
+                    let rollingRate = Double(dBytes) / dt
+                    let remainingBytes = Double(targetUsed - currentOnDisk)
+                    let estSeconds = remainingBytes / rollingRate
+                    if estSeconds > 0, estSeconds < 86_400 * 7 {
+                        return formatEtaSeconds(estSeconds)
+                    }
+                }
+            }
+        }
+
         guard let sessionFraction = activity.progressFraction, sessionFraction < 0.995 else {
             return nil
         }
 
-        // 1. If explicit byte counts and byte speed are present, compute directly from remaining bytes
+        // 2. If explicit byte counts and byte speed are present from CLI output, compute directly from remaining bytes
         if let speed = speedBytesPerSec, speed > 0 {
             if let total = totalBytes, let transferred = transferredBytes, total > transferred {
                 let remaining = Double(total - transferred)
@@ -1683,7 +1844,7 @@ final class BackupViewModel: ObservableObject {
             }
         }
 
-        // 2. Compute from rolling active session-fraction velocity (or session anchor if rolling window has df == 0)
+        // 3. Fallback: compute from rolling active session-fraction velocity
         if let last = activity.transferFractionSamples.last {
             let referenceSample: (date: Date, fraction: Double)? = {
                 if let first = activity.transferFractionSamples.first, (last.fraction - first.fraction) >= 0.003 {
@@ -1705,7 +1866,7 @@ final class BackupViewModel: ObservableObject {
             }
         }
 
-        // 3. Before active transfer velocity is established:
+        // 4. Before active transfer velocity is established:
         // On a resumed backup (or while sessionFraction <= 3%), suppress tqdm's cumulative ETA because
         // tqdm divides by total time since process launch (including PIN wait + 380k-file manifest diffing),
         // which produces absurd multi-hour ETAs (e.g. 14h 27m at 95%).

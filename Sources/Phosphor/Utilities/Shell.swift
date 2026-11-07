@@ -40,6 +40,19 @@ enum Shell {
         var isRunning: Bool {
             Shell.processExists(processIdentifier)
         }
+
+        /// Total bytes written to disk by this managed process since launch, queried directly
+        /// from the macOS XNU kernel (`proc_pid_rusage` `RUSAGE_INFO_V4`) with zero disk I/O.
+        var diskBytesWritten: UInt64 {
+            var ri = rusage_info_v4()
+            let rc = withUnsafeMutablePointer(to: &ri) { ptr in
+                ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { rusagePtr in
+                    proc_pid_rusage(processIdentifier, RUSAGE_INFO_V4, rusagePtr)
+                }
+            }
+            guard rc == 0 else { return 0 }
+            return ri.ri_diskio_byteswritten
+        }
     }
 
     private static func launchManagedProcess(
