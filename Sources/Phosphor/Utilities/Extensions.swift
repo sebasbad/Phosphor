@@ -105,6 +105,26 @@ extension String {
 // MARK: - FileManager Helpers
 
 extension FileManager {
+    /// Fast directory child entry count using `getattrlist(ATTR_DIR_ENTRYCOUNT)` on APFS/HFS+,
+    /// falling back to `st_nlink - 2` when `getattrlist` is unavailable.
+    /// Note: on APFS, `stat().st_nlink` on a directory is not the child file count (it returns 2
+    /// when there are no subdirectories), whereas `ATTR_DIR_ENTRYCOUNT` returns the exact entry count in O(1).
+    static func fastDirectoryEntryCount(atPath path: String, statBuf: inout stat) -> Int {
+        guard stat(path, &statBuf) == 0, (statBuf.st_mode & S_IFMT) == S_IFDIR else { return 0 }
+        struct DirEntryCountBuf {
+            var length: UInt32 = 0
+            var count: UInt32 = 0
+        }
+        var al = attrlist()
+        al.bitmapcount = UInt16(ATTR_BIT_MAP_COUNT)
+        al.dirattr = attrgroup_t(ATTR_DIR_ENTRYCOUNT)
+        var buf = DirEntryCountBuf()
+        if getattrlist(path, &al, &buf, MemoryLayout<DirEntryCountBuf>.size, 0) == 0 {
+            return Int(buf.count)
+        }
+        return max(0, Int(statBuf.st_nlink) - 2)
+    }
+
     func directorySize(at path: String) -> UInt64 {
         let fm = FileManager.default
         let snapshotPath = (path as NSString).appendingPathComponent("Snapshot")
@@ -125,12 +145,10 @@ extension FileManager {
                 if Task.isCancelled { return 0 }
                 let subPath = (dir as NSString).appendingPathComponent(sub)
                 var st = stat()
-                if stat(subPath, &st) == 0, (st.st_mode & S_IFMT) == S_IFDIR {
-                    let count = max(0, Int(st.st_nlink) - 2)
-                    if count > 0 {
-                        totalBucketFiles += count
-                        bucketPaths.append(subPath)
-                    }
+                let count = Self.fastDirectoryEntryCount(atPath: subPath, statBuf: &st)
+                if count > 0 {
+                    totalBucketFiles += count
+                    bucketPaths.append(subPath)
                 }
             }
         }
