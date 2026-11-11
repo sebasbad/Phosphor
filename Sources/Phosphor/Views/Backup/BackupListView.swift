@@ -991,6 +991,11 @@ struct BackupRow: View {
                 }
                 if let consolidatedETA = activity.consolidatedETADescription(at: liveNow) {
                     Text("· ETA: \(consolidatedETA)")
+                } else if let predicted = activity.predictiveETA,
+                          predicted.confidence != .none,
+                          predicted.estimatedSeconds > 0,
+                          activity.hasReceivedTransferProgress {
+                    Text("· ETA: ~\(Self.formatDuration(predicted.estimatedSeconds))")
                 } else if !activity.isAwaitingPasscode && !activity.isFinalizing && !isStalled && !isQuiet {
                     Text("· Calculating ETA…")
                         .foregroundStyle(.tertiary)
@@ -1051,7 +1056,7 @@ struct BackupRow: View {
     }
 
     private static func formatDuration(_ interval: TimeInterval) -> String {
-        let total = Int(interval)
+        let total = max(1, Int(interval.rounded()))
         if total >= 3600 { return "\(total / 3600)h \((total % 3600) / 60)m" }
         if total >= 60 { return "\(total / 60)m \(total % 60)s" }
         return "\(total)s"

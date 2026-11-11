@@ -157,14 +157,16 @@ final class BackupObservabilityCoordinator: ObservableObject {
         phaseMetrics = metricsCollector.currentPhaseMetrics
         throughputStats = throughputHistory.stats
         throughputTrend = throughputHistory.trend()
-        // Only project an ETA when the transfer sizes are actually known. With
-        // nil sizes the subtraction below yields 0 remaining, which produces a
-        // confident-looking "0s" estimate for a backup that has barely started.
-        if let totalBytes, let bytesTransferred, totalBytes > bytesTransferred {
+        // Only project an ETA when the transfer sizes are actually known and actual payload transfer has started.
+        // With nil sizes or while still in pre-transfer manifest diffing, delta calculations yield 0 remaining,
+        // producing a fabricated "0s" estimate for a backup that has barely started.
+        if let totalBytes, let bytesTransferred, totalBytes > bytesTransferred, (speedBytesPerSec ?? 0) > 0 {
             predictiveETA = throughputHistory.predictiveETA(
                 remainingBytes: totalBytes - bytesTransferred,
                 currentPhase: currentPhase.rawValue
             )
+        } else {
+            predictiveETA = nil
         }
 
         // Update stall detection
