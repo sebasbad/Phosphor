@@ -1659,9 +1659,9 @@ final class BackupViewModel: ObservableObject {
                     }()
                 )
                 activity.phaseMetrics = coordinator.phaseMetrics
-                activity.predictiveETA = isPostPinTransfer ? coordinator.predictiveETA : nil
-                activity.throughputStats = isPostPinTransfer ? coordinator.throughputStats : nil
-                activity.throughputTrend = isPostPinTransfer ? coordinator.throughputTrend : .insufficient
+                activity.predictiveETA = coordinator.predictiveETA
+                activity.throughputStats = coordinator.throughputStats
+                activity.throughputTrend = coordinator.throughputTrend
             }
         }
         if shouldNotifyPasscode {
