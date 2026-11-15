@@ -56,7 +56,6 @@ final class BackupObservabilityCoordinator: ObservableObject {
         )
         predictiveETA = nil
         throughputTrend = .insufficient
-        startSampling()
     }
 
     nonisolated deinit {
@@ -289,6 +288,7 @@ final class BackupObservabilityCoordinator: ObservableObject {
     }
 
     private func startSampling() {
+        stopSampling()
         samplingTimer = Timer.scheduledTimer(withTimeInterval: samplingInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.checkStallAndLiveness()
