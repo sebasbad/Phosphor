@@ -16,79 +16,6 @@ final class BackupViewModel: ObservableObject {
             case cancelled
         }
 
-        enum Phase: String, CaseIterable, Equatable {
-            case unknown
-            case sanitization
-            case incrementalResume
-            case fullBackup
-            case fallbackIdevicebackup2
-            case finalization
-            case verification
-            case completed
-            case failed
-            case cancelled
-
-            var displayName: String {
-                switch self {
-                case .unknown: return "Detecting..."
-                case .sanitization: return "Sanitizing"
-                case .incrementalResume: return "Resuming Backup"
-                case .fullBackup: return "Full Backup"
-                case .fallbackIdevicebackup2: return "Fallback Backup"
-                case .finalization: return "Finalizing"
-                case .verification: return "Verifying"
-                case .completed: return "Completed"
-                case .failed: return "Failed"
-                case .cancelled: return "Paused"
-                }
-            }
-
-            var systemImage: String {
-                switch self {
-                case .unknown: return "questionmark.circle"
-                case .sanitization: return "gearshape.2.fill"
-                case .incrementalResume: return "arrow.clockwise.circle.fill"
-                case .fullBackup: return "externaldrive.badge.plus"
-                case .fallbackIdevicebackup2: return "exclamationmark.triangle.fill"
-                case .finalization: return "arrow.triangle.2.circlepath.circle.fill"
-                case .verification: return "checkmark.shield.fill"
-                case .completed: return "checkmark.circle.fill"
-                case .failed: return "xmark.circle.fill"
-                case .cancelled: return "pause.circle.fill"
-                }
-            }
-
-            var color: Color {
-                switch self {
-                case .unknown: return .secondary
-                case .sanitization: return .blue
-                case .incrementalResume: return .orange
-                case .fullBackup: return .brandAccent
-                case .fallbackIdevicebackup2: return .yellow
-                case .finalization: return .purple
-                case .verification: return .green
-                case .completed: return .green
-                case .failed: return .red
-                case .cancelled: return .orange
-                }
-            }
-
-            var description: String {
-                switch self {
-                case .unknown: return "Detecting backup phase..."
-                case .sanitization: return "Cleaning corrupted plists, checkpointing SQLite WAL"
-                case .incrementalResume: return "Delta resume - transferring changed files only"
-                case .fullBackup: return "Initial full backup of all selected domains"
-                case .fallbackIdevicebackup2: return "Using idevicebackup2 fallback"
-                case .finalization: return "Writing Manifest.db, sealing backup"
-                case .verification: return "Verifying backup integrity"
-                case .completed: return "Backup completed successfully"
-                case .failed: return "Backup failed"
-                case .cancelled: return "Backup paused - progress saved"
-                }
-            }
-        }
-
         var id: String { udid }
         let udid: String
         var state: State
@@ -128,7 +55,6 @@ final class BackupViewModel: ObservableObject {
         var errorMessage: String?
 
         // Enhanced phase tracking
-        var phase: Phase = .unknown
         var manifestSizeBytes: Int64 = 0
         var lastSizeUpdate: Date?
         var processAlive: Bool = true
@@ -192,22 +118,6 @@ final class BackupViewModel: ObservableObject {
                 return true
             }
             return false
-        }
-
-        var phaseDisplayName: String {
-            phase.displayName
-        }
-
-        var phaseDescription: String {
-            phase.description
-        }
-
-        var phaseIcon: String {
-            phase.systemImage
-        }
-
-        var phaseColor: Color {
-            phase.color
         }
 
         var isStalled: Bool {
