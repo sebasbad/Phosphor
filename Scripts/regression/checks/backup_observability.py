@@ -133,14 +133,12 @@ def test_phase_durations_come_from_transitions_not_samples(root: Path) -> None:
     """Per-phase duration must be summed from transition records. Summing
     sample.duration overcounts: each sample is elapsed-since-phase-start."""
     tracker = read(root, "Sources/Phosphor/Utilities/PhaseTransitionTracker.swift")
-    collector = read(root, "Sources/Phosphor/Utilities/BackupMetricsCollector.swift")
     coordinator = read(root, "Sources/Phosphor/Utilities/BackupObservabilityCoordinator.swift")
     assert "func durationStats(for phase: String)" in tracker
     assert "$0.from.rawValue == phase" in tracker, "durations belong to the from-phase"
     assert "result[transition.from.rawValue, default: 0] += duration" in tracker
-    # The broken duplicate is gone, not left as a stub.
-    assert "phaseHistory.map { $0.duration }.reduce(0, +)" not in collector
-    assert "currentPhaseStartTime" not in collector
+    # The redundant BackupMetricsCollector is gone.
+    assert not (root / "Sources/Phosphor/Utilities/BackupMetricsCollector.swift").exists()
     # And the correct source is actually surfaced.
     assert "phaseDurations: phaseTracker.allPhaseDurations" in coordinator
     assert "let phaseDurations: [String: TimeInterval]" in coordinator
