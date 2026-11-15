@@ -17,7 +17,6 @@ final class BackupObservabilityCoordinator: ObservableObject {
     @Published var isQuiet = false
     @Published var isProcessAlive = true
     @Published var throughputTrend: ThroughputHistory.ThroughputTrend = .insufficient
-    @Published var actionLiveness: ActionLivenessStatus?
 
     // MARK: - Private State
 
@@ -181,12 +180,6 @@ final class BackupObservabilityCoordinator: ObservableObject {
         updateProcessLiveness()
     }
 
-    /// Called when backup process dies unexpectedly
-    func markProcessDead() {
-        processAlive = false
-        logger.warning("Backup process died unexpectedly")
-    }
-
     /// Get exportable snapshot for debugging
     func exportSnapshot() -> BackupObservabilitySnapshot {
         BackupObservabilitySnapshot(
@@ -292,46 +285,10 @@ final class BackupObservabilityCoordinator: ObservableObject {
         samplingTimer = nil
     }
 
-    private var actionStartedAt: Date = Date()
-    private var actionName: String = "Backup"
-    private var currentActionNote: String? = nil
-
-    /// Update the current user or system action being executed
-    func setAction(name: String, note: String? = nil) {
-        actionName = name
-        actionStartedAt = Date()
-        currentActionNote = note
-        updateActionLiveness()
-    }
-
-    /// Update the informational diagnostic note describing what is currently executing
-    func setActionNote(_ note: String?) {
-        currentActionNote = note
-        updateActionLiveness()
-    }
-
-    private func updateActionLiveness() {
-        let now = Date()
-        let staleInterval = now.timeIntervalSince(lastProgressUpdate)
-        let elapsed = now.timeIntervalSince(actionStartedAt)
-
-        actionLiveness = ActionLivenessStatus(
-            actionName: actionName,
-            startedAt: actionStartedAt,
-            elapsed: elapsed,
-            quietDuration: staleInterval,
-            stallTimeoutSeconds: 300,
-            currentActionNote: currentActionNote,
-            isStalled: isStalled,
-            isQuiet: isQuiet
-        )
-    }
-
     private func updateStallDetection() {
         let staleInterval = Date().timeIntervalSince(lastProgressUpdate)
         isStalled = staleInterval > 300 // 5 minutes
         isQuiet = staleInterval > 30 && !isStalled // 30 seconds quiet
-        updateActionLiveness()
     }
 
     private func updateProcessLiveness() {
