@@ -22,7 +22,6 @@ final class BackupObservabilityCoordinator: ObservableObject {
     // MARK: - Private State
 
     private let logger = Logger(subsystem: "com.phosphor.backup", category: "observability")
-    private let metricsCollector = BackupMetricsCollector()
     private let phaseTracker = PhaseTransitionTracker()
     private let throughputHistory = ThroughputHistory()
 
@@ -138,9 +137,6 @@ final class BackupObservabilityCoordinator: ObservableObject {
             )
         )
 
-        // Update collector
-        metricsCollector.record(sample: metrics)
-
         // Record throughput
         if let speed = speedBytesPerSec {
             throughputHistory.record(
@@ -153,7 +149,7 @@ final class BackupObservabilityCoordinator: ObservableObject {
         }
 
         // Update published state
-        phaseMetrics = metricsCollector.currentPhaseMetrics
+        phaseMetrics = metrics
         throughputStats = throughputHistory.stats
         throughputTrend = throughputHistory.trend()
         // Only project an ETA when the transfer sizes are actually known and actual payload transfer has started.
