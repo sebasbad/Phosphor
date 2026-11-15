@@ -999,7 +999,7 @@ struct BackupRow: View {
                           predicted.confidence != .none,
                           predicted.estimatedSeconds > 0,
                           activity.hasReceivedTransferProgress {
-                    Text("· ETA: ~\(Self.formatDuration(predicted.estimatedSeconds))")
+                    Text("· ETA: ~\(predicted.estimatedSeconds.formattedDuration)")
                 } else if !activity.isAwaitingPasscode && !activity.isFinalizing && !isStalled && !isQuiet {
                     Text("· Calculating ETA…")
                         .foregroundStyle(.tertiary)
@@ -1057,13 +1057,6 @@ struct BackupRow: View {
     private static func formatRate(_ bytesPerSecond: Double) -> String {
         guard bytesPerSecond > 0 else { return "-" }
         return ByteCountFormatter.string(fromByteCount: Int64(bytesPerSecond), countStyle: .file) + "/s"
-    }
-
-    private static func formatDuration(_ interval: TimeInterval) -> String {
-        let total = max(1, Int(interval.rounded()))
-        if total >= 3600 { return "\(total / 3600)h \((total % 3600) / 60)m" }
-        if total >= 60 { return "\(total / 60)m \(total % 60)s" }
-        return "\(total)s"
     }
 
     var body: some View {
