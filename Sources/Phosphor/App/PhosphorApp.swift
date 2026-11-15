@@ -227,14 +227,30 @@ struct PhosphorApp: App {
         if device.connectionType == .wifi && !BackupManager.hasExistingBackup(for: device.id) {
             guard confirmFirstFullWiFiBackup(for: device) else { return }
         }
+        let hasCompleteBackup = BackupManager.hasExistingBackup(for: device.id)
+            && backupVM.backups.contains(where: {
+                !$0.isArchivedSnapshot
+                    && ($0.udid == device.id || $0.id == device.id)
+                    && $0.healthState == .complete
+            })
+        let targetUDID = device.id
+        let preferNetwork = device.connectionType == .wifi
+        let config = DeviceBackupConfiguration.load(for: targetUDID)
         selectedSection = .backups
         Task {
+            await Task.detached(priority: .userInitiated) {
+                if hasCompleteBackup {
+                    _ = BackupManager.cloneBackupSnapshot(for: targetUDID)
+                } else if BackupManager.hasExistingBackup(for: targetUDID) {
+                    _ = BackupManager.archiveExistingBackup(for: targetUDID)
+                }
+            }.value
             await backupVM.createBackup(
-                udid: device.id,
-                incremental: false,
-                preferNetwork: device.connectionType == .wifi,
+                udid: targetUDID,
+                incremental: hasCompleteBackup,
+                preferNetwork: preferNetwork,
                 device: device,
-                configuration: DeviceBackupConfiguration.load(for: device.id)
+                configuration: config
             )
         }
     }
