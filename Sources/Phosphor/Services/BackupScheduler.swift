@@ -443,25 +443,12 @@ final class BackupScheduler: ObservableObject {
         var effectiveIncremental = incremental
         if !isResumable {
             effectiveIncremental = await Task.detached(priority: .utility) {
-                if incremental {
-                    let existingConfig = DeviceBackupConfiguration.inferFromExistingBackup(
-                        udid: udid,
-                        in: activeBackupDir
-                    )
-                    let isCompatible = existingConfig.map {
-                        configuration.isCompatibleForIncremental(with: $0)
-                    } ?? true
-                    if isCompatible {
-                        _ = BackupManager.cloneBackupSnapshot(for: udid, in: activeBackupDir)
-                        return true
-                    } else {
-                        _ = BackupManager.archiveExistingBackup(for: udid, in: activeBackupDir)
-                        return false
-                    }
-                } else if BackupManager.hasExistingBackup(for: udid, in: activeBackupDir) {
-                    _ = BackupManager.archiveExistingBackup(for: udid, in: activeBackupDir)
-                }
-                return false
+                BackupManager.prepareExistingBackupForRun(
+                    udid: udid,
+                    in: activeBackupDir,
+                    wantsIncremental: incremental,
+                    configuration: configuration
+                )
             }.value
         }
         if isResumable {

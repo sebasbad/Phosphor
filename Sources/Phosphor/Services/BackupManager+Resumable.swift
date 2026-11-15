@@ -50,6 +50,33 @@ extension BackupManager {
         return false
     }
 
+    /// Prepares an existing backup directory for a new backup run by checking profile/exclusion
+    /// compatibility (`inferFromExistingBackup`), snapshotting via APFS CoW (`cloneBackupSnapshot`)
+    /// when incremental-compatible, or archiving (`archiveExistingBackup`) before a full backup.
+    /// Returns `true` when the upcoming backup should run in incremental mode.
+    nonisolated static func prepareExistingBackupForRun(
+        udid: String,
+        in directory: String? = nil,
+        wantsIncremental: Bool,
+        configuration: DeviceBackupConfiguration
+    ) -> Bool {
+        let root = directory ?? activeBackupDir
+        if wantsIncremental {
+            let existingConfig = DeviceBackupConfiguration.inferFromExistingBackup(udid: udid, in: root)
+            let isCompatible = existingConfig.map { configuration.isCompatibleForIncremental(with: $0) } ?? true
+            if isCompatible {
+                _ = cloneBackupSnapshot(for: udid, in: root)
+                return true
+            } else {
+                _ = archiveExistingBackup(for: udid, in: root)
+                return false
+            }
+        } else if hasExistingBackup(for: udid, in: root) {
+            _ = archiveExistingBackup(for: udid, in: root)
+        }
+        return false
+    }
+
     // MARK: - Non-Destructive Metadata Rollback Guard & Quarantine (Issue #8)
 
     /// Path to the hidden in-flight metadata guard directory (`<BackupRoot>/.<UDID>-phosphor-guard-bkp`).

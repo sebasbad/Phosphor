@@ -230,25 +230,12 @@ struct PhosphorApp: App {
         selectedSection = .backups
         Task {
             let useIncremental = await Task.detached(priority: .userInitiated) {
-                if hasCompleteBackup {
-                    let existingConfig = DeviceBackupConfiguration.inferFromExistingBackup(
-                        udid: targetUDID,
-                        in: targetDir
-                    )
-                    let isCompatible = existingConfig.map {
-                        config.isCompatibleForIncremental(with: $0)
-                    } ?? true
-                    if isCompatible {
-                        _ = BackupManager.cloneBackupSnapshot(for: targetUDID, in: targetDir)
-                        return true
-                    } else {
-                        _ = BackupManager.archiveExistingBackup(for: targetUDID, in: targetDir)
-                        return false
-                    }
-                } else if BackupManager.hasExistingBackup(for: targetUDID, in: targetDir) {
-                    _ = BackupManager.archiveExistingBackup(for: targetUDID, in: targetDir)
-                }
-                return false
+                BackupManager.prepareExistingBackupForRun(
+                    udid: targetUDID,
+                    in: targetDir,
+                    wantsIncremental: hasCompleteBackup,
+                    configuration: config
+                )
             }.value
             await backupVM.createBackup(
                 udid: targetUDID,
