@@ -132,43 +132,41 @@ public enum BackupProfileType: String, CaseIterable, Identifiable, Codable, Send
         customDomains: Set<String> = [],
         excludedBundleIds: Set<String> = []
     ) -> [String]? {
-        switch self {
-        case .full:
-            guard !excludedBundleIds.isEmpty else { return nil }
+        let bundleNegativeLookahead: String
+        if !excludedBundleIds.isEmpty {
             let excludedPattern = excludedBundleIds
                 .map { NSRegularExpression.escapedPattern(for: $0) }
                 .joined(separator: "|")
-            return ["^(?!AppDomain(-(\(excludedPattern))|Group-.*(\(excludedPattern))).*).*$"]
+            bundleNegativeLookahead = "(?!AppDomain(-(\(excludedPattern))|Group-.*(\(excludedPattern))).*)"
+        } else {
+            bundleNegativeLookahead = ""
+        }
+
+        switch self {
+        case .full:
+            guard !excludedBundleIds.isEmpty else { return nil }
+            return ["^\(bundleNegativeLookahead).*$"]
 
         case .bareMinimal:
             // Core identity, communication, health, settings. Excludes CameraRoll, Media, and third-party apps.
             return [
-                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain(Group-group\\.|Plugin-|-)(com\\.apple\\..*))$"
+                "^\(bundleNegativeLookahead)(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain(Group-group\\.|Plugin-|-)(com\\.apple\\..*))$"
             ]
 
         case .communicationAndIdentity:
             // Bare Minimal + popular communication apps (WhatsApp, Signal, Telegram, WeChat)
             return [
-                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain(Group-group\\.|Plugin-|-)(com\\.apple\\..*)|AppDomain(Group-.*|-)(net\\.whatsapp\\.WhatsApp|net\\.whatsapp\\.WhatsAppSMB|org\\.whispersystems\\.signal|ph\\.telegra\\.Telegraph|com\\.tencent\\.xin).*)$"
+                "^\(bundleNegativeLookahead)(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain(Group-group\\.|Plugin-|-)(com\\.apple\\..*)|AppDomain(Group-.*|-)(net\\.whatsapp\\.WhatsApp|net\\.whatsapp\\.WhatsAppSMB|org\\.whispersystems\\.signal|ph\\.telegra\\.Telegraph|com\\.tencent\\.xin).*)$"
             ]
 
         case .essentialPhotos:
             // Bare Minimal + Camera Roll photos/videos
             return [
-                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|CameraRollDomain|AppDomain(Group-group\\.|Plugin-|-)(com\\.apple\\..*))$"
+                "^\(bundleNegativeLookahead)(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|CameraRollDomain|AppDomain(Group-group\\.|Plugin-|-)(com\\.apple\\..*))$"
             ]
 
         case .custom:
             guard !customDomains.isEmpty || !excludedBundleIds.isEmpty else { return nil }
-            let bundleNegativeLookahead: String
-            if !excludedBundleIds.isEmpty {
-                let excludedPattern = excludedBundleIds
-                    .map { NSRegularExpression.escapedPattern(for: $0) }
-                    .joined(separator: "|")
-                bundleNegativeLookahead = "(?!AppDomain(-(\(excludedPattern))|Group-.*(\(excludedPattern))).*)"
-            } else {
-                bundleNegativeLookahead = ""
-            }
             if !customDomains.isEmpty {
                 let domainPattern = customDomains.joined(separator: "|")
                 return ["^\(bundleNegativeLookahead)(\(domainPattern)).*$"]
