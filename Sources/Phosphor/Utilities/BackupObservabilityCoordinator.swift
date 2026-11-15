@@ -110,7 +110,7 @@ final class BackupObservabilityCoordinator: ObservableObject {
         // Detect phase change
         let newPhase = phase
         if newPhase != currentPhase {
-            transitionPhase(to: newPhase)
+            transitionToPhase(newPhase)
         }
 
         currentPhase = newPhase
@@ -202,11 +202,13 @@ final class BackupObservabilityCoordinator: ObservableObject {
     // MARK: - Private Implementation
 
     private func transitionToPhase(_ newPhase: BackupPhase) {
+        guard newPhase != currentPhase else { return }
+        let previousPhase = currentPhase
         let now = Date()
-        let duration = currentPhase != .detecting ? now.timeIntervalSince(phaseStartTime) : nil
+        let duration = previousPhase != .detecting ? now.timeIntervalSince(phaseStartTime) : nil
 
         let transition = PhaseTransitionRecord(
-            from: currentPhase,
+            from: previousPhase,
             to: newPhase,
             timestamp: now,
             duration: duration,
@@ -214,33 +216,12 @@ final class BackupObservabilityCoordinator: ObservableObject {
         )
 
         phaseTransitions.append(transition)
-        phaseTracker.recordTransition(from: currentPhase.rawValue, to: newPhase.rawValue)
+        phaseTracker.recordTransition(from: previousPhase.rawValue, to: newPhase.rawValue)
 
         currentPhase = newPhase
         phaseStartTime = now
 
-        logger.info("Phase transition: \(self.currentPhase.displayName) → \(newPhase.displayName)\(duration.map { " (\(Self.formatDuration($0)))" } ?? "")")
-    }
-
-    private func transitionPhase(to newPhase: BackupPhase) {
-        let now = Date()
-        let duration = currentPhase != .detecting ? now.timeIntervalSince(phaseStartTime) : nil
-
-        let transition = PhaseTransitionRecord(
-            from: currentPhase,
-            to: newPhase,
-            timestamp: now,
-            duration: duration,
-            metadata: nil
-        )
-
-        phaseTransitions.append(transition)
-        phaseTracker.recordTransition(from: currentPhase.rawValue, to: newPhase.rawValue)
-
-        currentPhase = newPhase
-        phaseStartTime = now
-
-        logger.info("Phase transition: \(self.currentPhase.displayName) → \(newPhase.displayName)\(duration.map { " (\(Self.formatDuration($0)))" } ?? "")")
+        logger.info("Phase transition: \(previousPhase.displayName) → \(newPhase.displayName)\(duration.map { " (\(Self.formatDuration($0)))" } ?? "")")
     }
 
     /// Detail for the current phase, using only data the coordinator actually
