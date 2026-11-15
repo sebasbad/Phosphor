@@ -46,6 +46,7 @@ final class FinalizationProgressTracker: @unchecked Sendable {
     private var lastFilesMoved: Int?
     private var lastVerifyEpoch: TimeInterval?
     private var lastVerifiedBuckets: Int?
+    private var verificationStartedAt: TimeInterval?
     private var knownTotalFiles: Int = 0
 
     init(backupDirectory: String, udid: String) {
@@ -66,14 +67,17 @@ final class FinalizationProgressTracker: @unchecked Sendable {
            snapshotState == "finished" {
 
             let now = Date().timeIntervalSince1970
-            let thresh = now - 900 // Buckets accessed in the last 15 minutes
+            let startedAt = verificationStartedAt ?? now
+            if verificationStartedAt == nil {
+                verificationStartedAt = startedAt
+            }
             var scanned = 0
             if let entries = try? fm.contentsOfDirectory(atPath: deviceDir) {
                 for entry in entries where entry.count == 2 && !entry.hasPrefix(".") {
                     let bucketPath = (deviceDir as NSString).appendingPathComponent(entry)
                     if let attrs = try? fm.attributesOfItem(atPath: bucketPath),
-                       let atime = attrs[.modificationDate] as? Date, // APFS stat fallback
-                       atime.timeIntervalSince1970 >= thresh {
+                       let mtime = attrs[.modificationDate] as? Date,
+                       mtime.timeIntervalSince1970 >= startedAt {
                         scanned += 1
                     }
                 }
@@ -113,6 +117,7 @@ final class FinalizationProgressTracker: @unchecked Sendable {
         }
 
         // 2. Stage 2: Moving files from Snapshot/ into root
+        verificationStartedAt = nil
         let rootBucket = (deviceDir as NSString).appendingPathComponent("00")
         let snapBucket = ((deviceDir as NSString).appendingPathComponent("Snapshot") as NSString).appendingPathComponent("00")
 
