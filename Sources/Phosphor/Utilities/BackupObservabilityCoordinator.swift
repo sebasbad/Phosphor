@@ -217,7 +217,7 @@ final class BackupObservabilityCoordinator: ObservableObject {
         currentPhase = newPhase
         phaseStartTime = now
 
-        logger.info("Phase transition: \(previousPhase.displayName) → \(newPhase.displayName)\(duration.map { " (\(Self.formatDuration($0)))" } ?? "")")
+        logger.info("Phase transition: \(previousPhase.displayName) → \(newPhase.displayName)\(duration.map { " (\($0.formattedDuration))" } ?? "")")
     }
 
     /// Detail for the current phase, using only data the coordinator actually
@@ -336,16 +336,6 @@ final class BackupObservabilityCoordinator: ObservableObject {
         if !isProcessAlive {
             logger.warning("Backup process appears dead - no progress updates for 60+ seconds")
         }
-    }
-
-    static func formatDuration(_ interval: TimeInterval) -> String {
-        let total = Int(interval)
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        if h > 0 { return "\(h)h \(m)m \(s)s" }
-        if m > 0 { return "\(m)m \(s)s" }
-        return "\(Int(interval))s"
     }
 }
 

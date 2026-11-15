@@ -287,7 +287,7 @@ final class BackupViewModel: ObservableObject {
             if let baseSecs = lastComputedEtaSeconds, let baseAt = lastComputedEtaAt, baseSecs > 0 {
                 let elapsedSinceCalc = max(0, now.timeIntervalSince(baseAt))
                 let liveSecs = max(30, baseSecs - elapsedSinceCalc)
-                let durationStr = BackupViewModel.formatEtaSeconds(liveSecs)
+                let durationStr = liveSecs.formattedDuration
                 let finish = now.addingTimeInterval(liveSecs)
                 return "\(durationStr) (~\(finish.contextualClockString()))"
             }
@@ -801,7 +801,7 @@ final class BackupViewModel: ObservableObject {
                 lines.append("Time per phase:")
                 for (phase, seconds) in snapshot.phaseDurations.sorted(by: { $0.value > $1.value }) {
                     let name = BackupPhase(rawValue: phase)?.displayName ?? phase
-                    lines.append("  \(name): \(PhaseDetail.formatDuration(seconds))")
+                    lines.append("  \(name): \(seconds.formattedDuration)")
                 }
             }
             let stats = snapshot.throughputStats
@@ -1631,16 +1631,6 @@ final class BackupViewModel: ObservableObject {
         return total > 0 ? total : nil
     }
 
-    nonisolated static func formatEtaSeconds(_ seconds: TimeInterval) -> String {
-        let clamped = max(1, Int(seconds.rounded()))
-        let h = clamped / 3600
-        let m = (clamped % 3600) / 60
-        let s = clamped % 60
-        if h > 0 { return "\(h)h \(m)m \(s)s" }
-        if m > 0 { return "\(m)m \(s)s" }
-        return "\(s)s"
-    }
-
     /// Records a 1-second sample of kernel `ri_diskio_byteswritten` (`proc_pid_rusage`), keeping a 10-minute
     /// rolling window of active payload writes so live `MB/s` and byte-based ETA are immune to `tqdm` integer `%` quantization.
     ///
@@ -1743,7 +1733,7 @@ final class BackupViewModel: ObservableObject {
             // Never blank out an already-established ETA to nil between integer percentage ticks
             let elapsed = max(0, Date().timeIntervalSince(prevAt))
             let remaining = max(30, prevSecs - elapsed)
-            activity.eta = formatEtaSeconds(remaining)
+            activity.eta = remaining.formattedDuration
         } else {
             activity.eta = nil
         }
@@ -1784,7 +1774,7 @@ final class BackupViewModel: ObservableObject {
                         let remainingBytes = Double(targetUsed - currentOnDisk)
                         let estSeconds = remainingBytes / rollingRate
                         if estSeconds > 0, estSeconds < 86_400 * 7 {
-                            return formatEtaSeconds(estSeconds)
+                            return estSeconds.formattedDuration
                         }
                     }
                 }
@@ -1799,7 +1789,7 @@ final class BackupViewModel: ObservableObject {
         if let speed = speedBytesPerSec, speed > 0 {
             if let total = totalBytes, let transferred = transferredBytes, total > transferred {
                 let remaining = Double(total - transferred)
-                return formatEtaSeconds(remaining / speed)
+                return (remaining / speed).formattedDuration
             }
             if let targetUsed = activity.targetDeviceUsedBytes {
                 let baselineBytes = activity.isResume ? (activity.resumeBytesBaseline ?? 0) : 0
@@ -1807,7 +1797,7 @@ final class BackupViewModel: ObservableObject {
                     let sessionTargetBytes = Double(targetUsed - baselineBytes)
                     let remainingSessionBytes = sessionTargetBytes * max(0.0, 1.0 - sessionFraction)
                     if remainingSessionBytes > 0 {
-                        return formatEtaSeconds(remainingSessionBytes / speed)
+                        return (remainingSessionBytes / speed).formattedDuration
                     }
                 }
             }
@@ -1829,7 +1819,7 @@ final class BackupViewModel: ObservableObject {
                     let remainingFraction = max(0.0, 1.0 - sessionFraction)
                     let estSeconds = remainingFraction / ratePerSec
                     if estSeconds > 0, estSeconds < 86_400 * 3 {
-                        return formatEtaSeconds(estSeconds)
+                        return estSeconds.formattedDuration
                     }
                 }
             }

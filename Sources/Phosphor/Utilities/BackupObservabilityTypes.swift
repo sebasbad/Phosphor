@@ -1,5 +1,17 @@
 import Foundation
 
+public extension TimeInterval {
+    var formattedDuration: String {
+        let total = max(1, Int(rounded()))
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        if h > 0 { return "\(h)h \(m)m \(s)s" }
+        if m > 0 { return "\(m)m \(s)s" }
+        return "\(s)s"
+    }
+}
+
 // MARK: - Shared Observability Types
 
 /// Phase of backup operation
@@ -93,17 +105,7 @@ public struct PhaseTransitionRecord: Codable, Sendable {
     }
 
     public var description: String {
-        "\(from.displayName) → \(to.displayName)\(duration.map { " (\(Self.formatDuration($0)))" } ?? "")"
-    }
-
-    public static func formatDuration(_ interval: TimeInterval) -> String {
-        let total = Int(interval)
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        if h > 0 { return "\(h)h \(m)m \(Int(interval.truncatingRemainder(dividingBy: 60)))s" }
-        if m > 0 { return "\(m)m \(s)s" }
-        return "\(Int(interval))s"
+        "\(from.displayName) → \(to.displayName)\(duration.map { " (\($0.formattedDuration))" } ?? "")"
     }
 }
 
@@ -118,21 +120,11 @@ public struct PhaseDurationStats: Codable, Sendable {
     public let lastOccurrence: Date?
 
     public var formattedTotal: String {
-        Self.formatDuration(totalDuration)
+        totalDuration.formattedDuration
     }
 
     public var formattedAverage: String {
-        Self.formatDuration(averageDuration)
-    }
-
-    public static func formatDuration(_ interval: TimeInterval) -> String {
-        let total = Int(interval)
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        if h > 0 { return "\(h)h \(m)m \(Int(interval.truncatingRemainder(dividingBy: 60)))s" }
-        if m > 0 { return "\(m)m \(s)s" }
-        return "\(Int(interval))s"
+        averageDuration.formattedDuration
     }
 }
 
@@ -239,11 +231,11 @@ public struct ActionLivenessStatus: Codable, Sendable, Equatable {
     }
 
     public var formattedElapsed: String {
-        PhaseTransitionRecord.formatDuration(elapsed)
+        elapsed.formattedDuration
     }
 
     public var formattedTimeoutRemaining: String {
-        PhaseTransitionRecord.formatDuration(timeoutRemaining)
+        timeoutRemaining.formattedDuration
     }
 }
 
@@ -276,21 +268,11 @@ public enum PhaseDetail: Codable, Sendable {
             let bucketStr = bucket.map { " - bucket \($0)" } ?? ""
             return "Verifying \(scanned)/\(total) buckets\(bucketStr)"
         case .completed(let bytes, let files, let duration):
-            return "Completed: \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)), \(files) files in \(Self.formatDuration(duration))"
+            return "Completed: \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)), \(files) files in \(duration.formattedDuration)"
         case .failed(let error):
             return "Failed: \(error)"
         case .cancelled(let progress):
             return "Paused at \(Int(progress * 100))% - progress saved"
         }
-    }
-
-    static func formatDuration(_ interval: TimeInterval) -> String {
-        let total = Int(interval)
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        if h > 0 { return "\(h)h \(m)m \(Int(interval.truncatingRemainder(dividingBy: 60)))s" }
-        if m > 0 { return "\(m)m \(s)s" }
-        return "\(Int(interval))s"
     }
 }

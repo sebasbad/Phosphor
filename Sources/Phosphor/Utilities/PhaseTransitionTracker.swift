@@ -34,7 +34,7 @@ final class PhaseTransitionTracker: @unchecked Sendable {
 
         _transitions.append(transition)
 
-        logger.info("Phase transition: \(from) → \(to)\(duration.map { " (\(Self.formatDuration($0)))" } ?? "")")
+        logger.info("Phase transition: \(from) → \(to)\(duration.map { " (\($0.formattedDuration))" } ?? "")")
     }
 
     /// Get all recorded transitions
@@ -83,17 +83,5 @@ final class PhaseTransitionTracker: @unchecked Sendable {
     func reset() {
         _transitions.removeAll()
         phaseStartTimes.removeAll()
-    }
-
-    // MARK: - Private
-
-    static func formatDuration(_ interval: TimeInterval) -> String {
-        let total = Int(interval)
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        if h > 0 { return "\(h)h \(m)m \(Int(interval.truncatingRemainder(dividingBy: 60)))s" }
-        if m > 0 { return "\(m)m \(s)s" }
-        return "\(Int(interval))s"
     }
 }
