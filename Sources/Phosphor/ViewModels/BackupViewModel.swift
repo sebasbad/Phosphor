@@ -1876,6 +1876,11 @@ final class BackupViewModel: ObservableObject {
         }
         let request = recoveryRequest(for: issue)
         backupIssue = nil
+        let recoveryRoot = issue.recoveryPath.map { ($0 as NSString).deletingLastPathComponent }
+        await Task.detached(priority: .userInitiated) {
+            _ = BackupManager.archiveExistingBackup(for: udid, in: recoveryRoot)
+        }.value
+        loadBackups()
         await createBackup(
             udid: udid,
             incremental: false,
