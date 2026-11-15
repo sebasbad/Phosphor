@@ -109,7 +109,8 @@ struct BackupPreflightSheet: View {
             isCheckingExistingBackup = false
             hasExistingBackup = result.exists
             existingBackupConfiguration = result.inferred
-            if let inferred = result.inferred {
+            if let inferred = result.inferred,
+               !DeviceBackupConfiguration.hasPersistedConfiguration(for: udid) {
                 configuration.profileType = inferred.profileType
                 configuration.excludedBundleIds = inferred.excludedBundleIds
             }
