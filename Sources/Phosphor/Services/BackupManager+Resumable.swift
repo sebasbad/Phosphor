@@ -345,39 +345,11 @@ extension BackupManager {
             if let known = knownDirectorySize, known > 0 {
                 totalBytes = known
             } else if !bucketPaths.isEmpty {
-                // Sample up to 16 evenly spaced buckets (up to 25 files each via opendir/readdir)
-                // without enumerating entire 1,800-file bucket directories over USB.
-                let sampleCount = min(16, bucketPaths.count)
-                var sampleFiles = 0
-                var sampleBytes: UInt64 = 0
-                for i in 0..<sampleCount {
-                    if Task.isCancelled { return nil }
-                    let idx = (i * bucketPaths.count) / sampleCount
-                    let subPath = bucketPaths[idx]
-                    if let dp = opendir(subPath) {
-                        var inBucket = 0
-                        while let ep = readdir(dp), inBucket < 25 {
-                            if ep.pointee.d_type == DT_REG {
-                                let name = withUnsafePointer(to: ep.pointee.d_name) {
-                                    $0.withMemoryRebound(to: CChar.self, capacity: Int(ep.pointee.d_namlen) + 1) {
-                                        String(cString: $0)
-                                    }
-                                }
-                                let fp = (subPath as NSString).appendingPathComponent(name)
-                                var fst = stat()
-                                if stat(fp, &fst) == 0, (fst.st_mode & S_IFMT) == S_IFREG {
-                                    sampleFiles += 1
-                                    inBucket += 1
-                                    sampleBytes += UInt64(max(0, fst.st_size))
-                                }
-                            }
-                        }
-                        closedir(dp)
-                    }
-                }
-                if sampleFiles > 0 {
-                    let avg = sampleBytes / UInt64(sampleFiles)
-                    totalBytes = UInt64(count) * avg
+                if Task.isCancelled { return nil }
+                if let sampled = FileManager.sampledHexBucketSize(bucketPaths: bucketPaths, totalBucketFiles: count) {
+                    totalBytes = sampled
+                } else if Task.isCancelled {
+                    return nil
                 } else {
                     totalBytes = UInt64(count) * 700_000
                 }
