@@ -143,19 +143,19 @@ public enum BackupProfileType: String, CaseIterable, Identifiable, Codable, Send
         case .bareMinimal:
             // Core identity, communication, health, settings. Excludes CameraRoll, Media, and third-party apps.
             return [
-                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain-com\\.apple\\..*)$"
+                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain(Group-group\\.|Plugin-|-)(com\\.apple\\..*))$"
             ]
 
         case .communicationAndIdentity:
             // Bare Minimal + popular communication apps (WhatsApp, Signal, Telegram, WeChat)
             return [
-                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain-com\\.apple\\..*|AppDomain(Group-.*|-)(net\\.whatsapp\\.WhatsApp|net\\.whatsapp\\.WhatsAppSMB|org\\.whispersystems\\.signal|ph\\.telegra\\.Telegraph|com\\.tencent\\.xin).*)$"
+                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain(Group-group\\.|Plugin-|-)(com\\.apple\\..*)|AppDomain(Group-.*|-)(net\\.whatsapp\\.WhatsApp|net\\.whatsapp\\.WhatsAppSMB|org\\.whispersystems\\.signal|ph\\.telegra\\.Telegraph|com\\.tencent\\.xin).*)$"
             ]
 
         case .essentialPhotos:
             // Bare Minimal + Camera Roll photos/videos
             return [
-                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|CameraRollDomain|AppDomain-com\\.apple\\..*)$"
+                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|CameraRollDomain|AppDomain(Group-group\\.|Plugin-|-)(com\\.apple\\..*))$"
             ]
 
         case .custom:
