@@ -197,48 +197,6 @@ public struct PhaseMetrics: Codable, Sendable {
     }
 }
 
-/// Dynamic action state and timeout status for user feedback
-public struct ActionLivenessStatus: Codable, Sendable, Equatable {
-    public let actionName: String
-    public let startedAt: Date
-    public let elapsed: TimeInterval
-    public let quietDuration: TimeInterval
-    public let stallTimeoutSeconds: TimeInterval
-    public let timeoutRemaining: TimeInterval
-    public let currentActionNote: String?
-    public let isStalled: Bool
-    public let isQuiet: Bool
-
-    public init(
-        actionName: String,
-        startedAt: Date,
-        elapsed: TimeInterval,
-        quietDuration: TimeInterval,
-        stallTimeoutSeconds: TimeInterval = 300,
-        currentActionNote: String? = nil,
-        isStalled: Bool = false,
-        isQuiet: Bool = false
-    ) {
-        self.actionName = actionName
-        self.startedAt = startedAt
-        self.elapsed = elapsed
-        self.quietDuration = quietDuration
-        self.stallTimeoutSeconds = stallTimeoutSeconds
-        self.timeoutRemaining = max(0, stallTimeoutSeconds - quietDuration)
-        self.currentActionNote = currentActionNote
-        self.isStalled = isStalled
-        self.isQuiet = isQuiet
-    }
-
-    public var formattedElapsed: String {
-        elapsed.formattedDuration
-    }
-
-    public var formattedTimeoutRemaining: String {
-        timeoutRemaining.formattedDuration
-    }
-}
-
 /// Detailed phase-specific metadata
 public enum PhaseDetail: Codable, Sendable {
     case sanitization(filesScanned: Int, filesCleaned: Int, walCheckpointed: Bool)
