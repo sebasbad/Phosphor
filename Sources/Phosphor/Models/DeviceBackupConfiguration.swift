@@ -60,15 +60,6 @@ public struct DeviceBackupConfiguration: Codable, Equatable, Sendable {
         guard !domains.isEmpty else { return nil }
 
         let hasCameraRoll = domains.contains("CameraRollDomain")
-        let backedUpThirdPartyApps: Set<String> = Set(
-            domains.compactMap { domain -> String? in
-                guard domain.hasPrefix("AppDomain-") else { return nil }
-                let bundleId = String(domain.dropFirst("AppDomain-".count))
-                guard !bundleId.hasPrefix("com.apple.") else { return nil }
-                return bundleId
-            }
-        )
-
         let communicationApps: Set<String> = [
             "net.whatsapp.WhatsApp",
             "net.whatsapp.WhatsAppSMB",
@@ -76,6 +67,25 @@ public struct DeviceBackupConfiguration: Codable, Equatable, Sendable {
             "ph.telegra.Telegraph",
             "com.tencent.xin"
         ]
+
+        let backedUpThirdPartyApps: Set<String> = Set(
+            domains.compactMap { domain -> String? in
+                if domain.hasPrefix("AppDomain-") {
+                    let bundleId = String(domain.dropFirst("AppDomain-".count))
+                    guard !bundleId.hasPrefix("com.apple.") else { return nil }
+                    return bundleId
+                }
+                if domain.hasPrefix("AppDomainGroup-") {
+                    let groupId = String(domain.dropFirst("AppDomainGroup-".count))
+                    guard !groupId.hasPrefix("group.com.apple.") else { return nil }
+                    if let matchedCommApp = communicationApps.first(where: { groupId.contains($0) }) {
+                        return matchedCommApp
+                    }
+                    return groupId
+                }
+                return nil
+            }
+        )
 
         if backedUpThirdPartyApps.isEmpty {
             if hasCameraRoll {
