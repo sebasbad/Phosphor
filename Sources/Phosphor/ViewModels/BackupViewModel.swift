@@ -1157,6 +1157,9 @@ final class BackupViewModel: ObservableObject {
                     $0.phaseMetrics = coordinator.phaseMetrics
                 }
             }
+            // Invalidate the live proc_pid_rusage size estimate so loadBackups() shows
+            // "Calculating size…" and resolves the true sealed on-disk size automatically.
+            resolvedSizesByPath.removeValue(forKey: BackupManager.backupPath(for: udid))
             loadBackups()
         } else if manager.lastOperationWasCancelled {
             updateActivity(udid: udid) {
