@@ -224,20 +224,35 @@ struct PhosphorApp: App {
                     && $0.healthState == .complete
             })
         let targetUDID = device.id
+        let targetDir = BackupManager.activeBackupDir
         let preferNetwork = device.connectionType == .wifi
         let config = DeviceBackupConfiguration.load(for: targetUDID)
         selectedSection = .backups
         Task {
-            await Task.detached(priority: .userInitiated) {
+            let useIncremental = await Task.detached(priority: .userInitiated) {
                 if hasCompleteBackup {
-                    _ = BackupManager.cloneBackupSnapshot(for: targetUDID)
-                } else if BackupManager.hasExistingBackup(for: targetUDID) {
-                    _ = BackupManager.archiveExistingBackup(for: targetUDID)
+                    let existingConfig = DeviceBackupConfiguration.inferFromExistingBackup(
+                        udid: targetUDID,
+                        in: targetDir
+                    )
+                    let isCompatible = existingConfig.map {
+                        config.isCompatibleForIncremental(with: $0)
+                    } ?? true
+                    if isCompatible {
+                        _ = BackupManager.cloneBackupSnapshot(for: targetUDID, in: targetDir)
+                        return true
+                    } else {
+                        _ = BackupManager.archiveExistingBackup(for: targetUDID, in: targetDir)
+                        return false
+                    }
+                } else if BackupManager.hasExistingBackup(for: targetUDID, in: targetDir) {
+                    _ = BackupManager.archiveExistingBackup(for: targetUDID, in: targetDir)
                 }
+                return false
             }.value
             await backupVM.createBackup(
                 udid: targetUDID,
-                incremental: hasCompleteBackup,
+                incremental: useIncremental,
                 preferNetwork: preferNetwork,
                 device: device,
                 configuration: config

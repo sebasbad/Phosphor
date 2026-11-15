@@ -98,26 +98,45 @@ final class DeviceCloneService: ObservableObject {
             return false
         }()
 
+        let sourceConfiguration = DeviceBackupConfiguration.load(for: sourceUDID)
+        let activeBackupDir = BackupManager.activeBackupDir
         let hasCompleteSourceBackup = !shouldResume && backupManager.backups.contains {
             !$0.isArchivedSnapshot && ($0.udid == sourceUDID || $0.id == sourceUDID) && $0.healthState == .complete
         }
 
+        let useIncrementalSourceBackup: Bool
         if !shouldResume {
-            await Task.detached(priority: .userInitiated) {
+            useIncrementalSourceBackup = await Task.detached(priority: .userInitiated) {
                 if hasCompleteSourceBackup {
-                    _ = BackupManager.cloneBackupSnapshot(for: sourceUDID)
-                } else if BackupManager.hasExistingBackup(for: sourceUDID) {
-                    _ = BackupManager.archiveExistingBackup(for: sourceUDID)
+                    let existingConfig = DeviceBackupConfiguration.inferFromExistingBackup(
+                        udid: sourceUDID,
+                        in: activeBackupDir
+                    )
+                    let isCompatible = existingConfig.map {
+                        sourceConfiguration.isCompatibleForIncremental(with: $0)
+                    } ?? true
+                    if isCompatible {
+                        _ = BackupManager.cloneBackupSnapshot(for: sourceUDID, in: activeBackupDir)
+                        return true
+                    } else {
+                        _ = BackupManager.archiveExistingBackup(for: sourceUDID, in: activeBackupDir)
+                        return false
+                    }
+                } else if BackupManager.hasExistingBackup(for: sourceUDID, in: activeBackupDir) {
+                    _ = BackupManager.archiveExistingBackup(for: sourceUDID, in: activeBackupDir)
                 }
+                return false
             }.value
+        } else {
+            useIncrementalSourceBackup = false
         }
 
         await backupViewModel.createBackup(
             udid: sourceUDID,
-            incremental: hasCompleteSourceBackup,
+            incremental: useIncrementalSourceBackup,
             encrypted: encrypted,
             isResume: shouldResume,
-            configuration: DeviceBackupConfiguration.load(for: sourceUDID)
+            configuration: sourceConfiguration
         )
         let sourceActivity = backupViewModel.activity(for: sourceUDID)
         let backupSuccess = sourceActivity?.state == .completed
@@ -144,7 +163,7 @@ final class DeviceCloneService: ObservableObject {
 
         // Find backup
         backupManager.discoverBackups()
-        let sourceBackups = backupManager.backups.filter { $0.udid == sourceUDID && $0.healthState == .complete }
+        let sourceBackups = backupManager.backups.filter { $0.udid == sourceUDID && $0.healthState == .complete && !$0.isArchivedSnapshot }
         let freshSourceBackups = sourceBackups.filter {
             previousFingerprints[$0.path] != backupFingerprint(for: $0)
         }
