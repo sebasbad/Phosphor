@@ -500,24 +500,6 @@ struct AppExclusionView: View {
     }
 }
 
-/// Modal sheet wrapper for selective app data exclusion before running iOS backups (Issue #4).
-struct AppExclusionSheet: View {
-    let udid: String
-    @Binding var configuration: DeviceBackupConfiguration
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        AppExclusionView(
-            udid: udid,
-            configuration: $configuration,
-            onDismiss: {
-                dismiss()
-            }
-        )
-        .frame(minWidth: 550, idealWidth: 620, minHeight: 480, idealHeight: 560)
-    }
-}
-
 /// Extracted row view for an application target in the backup inclusion/exclusion list.
 struct AppRowView: View {
     let app: AppBackupTarget

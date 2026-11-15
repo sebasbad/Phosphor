@@ -59,7 +59,7 @@ def test_app_exclusion_sheet_and_profile_selector_views_exist(root: Path) -> Non
     content_src = read(root, "Sources/Phosphor/Views/ContentView.swift")
     overview_src = read(root, "Sources/Phosphor/Views/Device/DeviceOverviewView.swift")
 
-    assert_contains(sheet_src, "struct AppExclusionSheet: View", "AppExclusionSheet view must exist")
+    assert_contains(sheet_src, "struct AppExclusionView: View", "AppExclusionView must exist")
     assert_contains(sheet_src, "Profile Details & Custom Inclusions", "AppExclusionSheet must have proper title")
     assert_contains(sheet_src, "listInstalledAppsWithSizes", "AppExclusionSheet must query apps with sizes")
     assert_contains(sheet_src, "appsTabContent", "AppExclusionSheet must provide application inclusion list")
