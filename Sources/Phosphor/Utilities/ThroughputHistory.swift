@@ -71,14 +71,7 @@ final class ThroughputHistory: @unchecked Sendable {
         }
 
         public var formattedETA: String {
-            guard estimatedSeconds > 0 else { return "Unknown" }
-            let total = Int(estimatedSeconds)
-            let h = total / 3600
-            let m = (total % 3600) / 60
-            let s = total % 60
-            if h > 0 { return "\(h)h \(m)m \(s)s" }
-            if m > 0 { return "\(m)m \(s)s" }
-            return "\(s)s"
+            estimatedSeconds > 0 ? estimatedSeconds.formattedDuration : "Unknown"
         }
     }
 

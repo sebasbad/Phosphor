@@ -26,17 +26,7 @@ final class FinalizationProgressTracker: @unchecked Sendable {
 
         var formattedETA: String? {
             guard let eta = etaSeconds, eta > 0 else { return nil }
-            let total = Int(eta)
-            let m = (total / 60) % 60
-            let h = total / 3600
-            let s = total % 60
-            if h > 0 {
-                return "\(h)h \(m)m"
-            } else if m > 0 {
-                return "\(m)m \(s)s"
-            } else {
-                return "\(s)s"
-            }
+            return eta.formattedDuration
         }
     }
 
