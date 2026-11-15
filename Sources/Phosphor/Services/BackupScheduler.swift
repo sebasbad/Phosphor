@@ -439,6 +439,15 @@ final class BackupScheduler: ObservableObject {
         }
 
         let configuration = DeviceBackupConfiguration.load(for: udid)
+        if !isResumable {
+            await Task.detached(priority: .utility) {
+                if incremental {
+                    _ = BackupManager.cloneBackupSnapshot(for: udid)
+                } else if BackupManager.hasExistingBackup(for: udid) {
+                    _ = BackupManager.archiveExistingBackup(for: udid)
+                }
+            }.value
+        }
         if isResumable {
             await backupViewModel.createBackup(
                 udid: udid,
