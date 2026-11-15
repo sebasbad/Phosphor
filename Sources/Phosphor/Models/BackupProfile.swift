@@ -149,7 +149,7 @@ public enum BackupProfileType: String, CaseIterable, Identifiable, Codable, Send
         case .communicationAndIdentity:
             // Bare Minimal + popular communication apps (WhatsApp, Signal, Telegram, WeChat)
             return [
-                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain-com\\.apple\\..*|AppDomain(-Group)?-(net\\.whatsapp\\.WhatsApp|org\\.whispersystems\\.signal|ph\\.telegra\\.Telegraph|com\\.tencent\\.xin).*)$"
+                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain-com\\.apple\\..*|AppDomain(Group-.*|-)(net\\.whatsapp\\.WhatsApp|net\\.whatsapp\\.WhatsAppSMB|org\\.whispersystems\\.signal|ph\\.telegra\\.Telegraph|com\\.tencent\\.xin).*)$"
             ]
 
         case .essentialPhotos:
