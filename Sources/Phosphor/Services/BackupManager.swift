@@ -911,12 +911,7 @@ final class BackupManager: ObservableObject {
         let onlyRegex: [String]? = {
             guard let config = configuration else { return nil }
             return config.profileType.preservationRegex(
-                customDomains: config.customIncludedDomains,
-                excludedBundleIds: config.excludedBundleIds,
-                excludeMediaFiles: config.excludeMediaAbove50MB,
-                excludeAppCaches: config.excludeAppCaches,
-                excludedFilePatterns: config.excludedFilePatterns,
-                excludedRelativePaths: config.excludedRelativePaths
+                excludedBundleIds: config.excludedBundleIds
             )
         }()
 

@@ -17,8 +17,6 @@ public struct AppBackupTarget: Identifiable, Hashable, Sendable {
         staticDiskBytesOptional ?? 0
     }
 
-    public var isExcluded: Bool
-    public var isMediaExcludedOnly: Bool // Keep settings/DBs, exclude videos > 50 MB
     public let isSystemApp: Bool
 
     public init(
@@ -27,8 +25,6 @@ public struct AppBackupTarget: Identifiable, Hashable, Sendable {
         version: String = "",
         dynamicDiskBytes: Int64? = nil,
         staticDiskBytes: Int64? = nil,
-        isExcluded: Bool = false,
-        isMediaExcludedOnly: Bool = false,
         isSystemApp: Bool = false
     ) {
         self.id = id
@@ -36,8 +32,6 @@ public struct AppBackupTarget: Identifiable, Hashable, Sendable {
         self.version = version
         self.dynamicDiskBytesOptional = dynamicDiskBytes
         self.staticDiskBytesOptional = staticDiskBytes
-        self.isExcluded = isExcluded
-        self.isMediaExcludedOnly = isMediaExcludedOnly
         self.isSystemApp = isSystemApp
     }
 
