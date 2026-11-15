@@ -81,7 +81,6 @@ struct BackupPreflightSheet: View {
             case .appExclusions:
                 AppExclusionView(
                     udid: device.id,
-                    backupDirectory: backupDirectory,
                     configuration: $configuration,
                     onDismiss: {
                         withAnimation(.easeInOut(duration: 0.2)) {
