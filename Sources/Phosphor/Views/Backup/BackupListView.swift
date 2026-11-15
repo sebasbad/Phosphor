@@ -379,10 +379,7 @@ struct BackupListView: View {
     }
 
     private func hasResumableBackup(for device: DeviceInfo) -> Bool {
-        guard !backupVM.isBackupActive(for: device.id) else { return false }
-        return backupVM.backups.contains {
-            !$0.isArchivedSnapshot && ($0.udid == device.id || $0.id == device.id) && $0.healthState == .paused
-        }
+        backupVM.hasResumableBackup(for: device.id)
     }
 
     private func backupState(for device: DeviceInfo) -> (title: String, detail: String, icon: String, tint: Color) {
