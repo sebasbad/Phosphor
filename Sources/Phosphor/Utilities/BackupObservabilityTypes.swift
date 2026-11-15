@@ -136,48 +136,6 @@ public struct PhaseDurationStats: Codable, Sendable {
     }
 }
 
-/// Recovery action for backup failures
-public enum RecoveryAction: Codable, Sendable, Equatable {
-    case retry
-    case resumeBackup
-    case deleteIncompleteAndRunFull
-    case runFullBackup
-    case openBackupSettings
-}
-
-/// Health state of backup metadata
-public enum BackupMetadataHealth: Equatable {
-    case missing
-    case incomplete(path: String)
-    case complete
-}
-
-/// Backup failure with recovery guidance
-public struct BackupFailure: Codable, Sendable {
-    public let title: String
-    public let message: String
-    public let technicalDetails: String
-    public let recoveryAction: RecoveryAction?
-    public let udid: String
-    public let recoveryPath: String
-
-    public init(
-        title: String,
-        message: String,
-        technicalDetails: String,
-        recoveryAction: RecoveryAction?,
-        udid: String,
-        recoveryPath: String
-    ) {
-        self.title = title
-        self.message = message
-        self.technicalDetails = technicalDetails
-        self.recoveryAction = recoveryAction
-        self.udid = udid
-        self.recoveryPath = recoveryPath
-    }
-}
-
 public struct PhaseContext: Sendable {
     public var filesResumed: Int?
     public var resumeBaselineFraction: Double?
