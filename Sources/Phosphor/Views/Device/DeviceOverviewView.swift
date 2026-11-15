@@ -485,10 +485,7 @@ struct DeviceOverviewView: View {
     }
 
     private func hasResumableBackup(for device: DeviceInfo) -> Bool {
-        if let existing = backupVM.backups.first(where: { !$0.isArchivedSnapshot && ($0.udid == device.id || $0.id == device.id) }) {
-            return existing.healthState == .paused
-        }
-        return false
+        backupVM.hasResumableBackup(for: device.id)
     }
 
     private func backupActionLabel(for device: DeviceInfo) -> String {

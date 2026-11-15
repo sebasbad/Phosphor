@@ -198,14 +198,7 @@ struct PhosphorApp: App {
     }
 
     private func hasResumableBackup(for device: DeviceInfo) -> Bool {
-        guard !backupVM.isBackupActive(for: device.id) else { return false }
-        if backupVM.backups.contains(where: { $0.udid == device.id && !$0.isArchivedSnapshot && $0.healthState == .paused }) {
-            return true
-        }
-        if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: device.id) {
-            return BackupManager.incompleteBackupHasPayloadData(path)
-        }
-        return false
+        backupVM.hasResumableBackup(for: device.id)
     }
 
     private func startBackupNow() {

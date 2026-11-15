@@ -666,6 +666,17 @@ final class BackupViewModel: ObservableObject {
         backupActivities[udid]?.isActive == true
     }
 
+    func hasResumableBackup(for udid: String) -> Bool {
+        guard !isBackupActive(for: udid) else { return false }
+        if let existing = backups.first(where: { !$0.isArchivedSnapshot && ($0.udid == udid || $0.id == udid) }) {
+            return existing.healthState == .paused
+        }
+        if case .incomplete(let path) = BackupManager.backupMetadataHealth(for: udid) {
+            return BackupManager.incompleteBackupHasPayloadData(path)
+        }
+        return false
+    }
+
     func cancelBackup(udid: String) {
         switch jobQueue.cancel(udid: udid) {
         case .removedQueued:
