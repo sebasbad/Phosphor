@@ -80,67 +80,6 @@ public enum BackupProfileType: String, CaseIterable, Identifiable, Codable, Send
         }
     }
 
-    /// Granular domain categories available for backup filtering and customization.
-    public enum DomainCategory: String, CaseIterable, Identifiable, Codable, Sendable {
-        case identityAndSettings = "identity_settings"
-        case messagesAndHealth = "messages_health"
-        case cameraRoll = "camera_roll"
-        case media = "media"
-        case apps = "apps"
-
-        public var id: String { rawValue }
-
-        public var title: String {
-            switch self {
-            case .identityAndSettings:
-                return "Settings, Passwords & Accounts"
-            case .messagesAndHealth:
-                return "SMS, Messages & Health"
-            case .cameraRoll:
-                return "Photos & Videos (Camera Roll)"
-            case .media:
-                return "Music, Podcasts & Books"
-            case .apps:
-                return "Applications & Data"
-            }
-        }
-
-        public var iconName: String {
-            switch self {
-            case .identityAndSettings:
-                return "key.fill"
-            case .messagesAndHealth:
-                return "message.fill"
-            case .cameraRoll:
-                return "photo.fill"
-            case .media:
-                return "music.note"
-            case .apps:
-                return "app.badge.checkmark"
-            }
-        }
-
-        public var isProtected: Bool {
-            self == .identityAndSettings
-        }
-    }
-
-    /// Set of domain categories included by default for this profile template.
-    public var defaultDomainCategories: Set<DomainCategory> {
-        switch self {
-        case .full:
-            return Set(DomainCategory.allCases)
-        case .bareMinimal:
-            return [.identityAndSettings, .messagesAndHealth]
-        case .communicationAndIdentity:
-            return [.identityAndSettings, .messagesAndHealth]
-        case .essentialPhotos:
-            return [.identityAndSettings, .messagesAndHealth, .cameraRoll]
-        case .custom:
-            return [.identityAndSettings, .messagesAndHealth]
-        }
-    }
-
     /// Content summary items (included and excluded) for high-transparency display in UI cards.
     public var contentSummary: (included: [String], excluded: [String]) {
         switch self {
@@ -191,68 +130,36 @@ public enum BackupProfileType: String, CaseIterable, Identifiable, Codable, Send
     /// Returns nil if no domain filtering is needed (full archive).
     public func preservationRegex(
         customDomains: Set<String> = [],
-        excludedBundleIds: Set<String> = [],
-        excludeMediaFiles: Bool = false,
-        excludeAppCaches: Bool = false,
-        excludedFilePatterns: [String] = [],
-        excludedRelativePaths: Set<String> = []
+        excludedBundleIds: Set<String> = []
     ) -> [String]? {
-        // Collect negative exclusion sub-patterns for files
-        var negativeFileParts: [String] = []
-        if excludeMediaFiles {
-            negativeFileParts.append(#"\.(mp4|mkv|mov|avi|webm|m4v|flac|wav|iso|bin)$"#)
-        }
-        if excludeAppCaches {
-            negativeFileParts.append(#"/(Library/Caches|tmp)/"#)
-        }
-        for pattern in excludedFilePatterns where !pattern.isEmpty {
-            let escaped = NSRegularExpression.escapedPattern(for: pattern)
-                .replacingOccurrences(of: #"\*"#, with: ".*")
-            negativeFileParts.append(escaped)
-        }
-        for relPath in excludedRelativePaths where !relPath.isEmpty {
-            negativeFileParts.append(NSRegularExpression.escapedPattern(for: relPath) + "$")
-        }
-
-        let fileNegativeLookahead: String
-        if !negativeFileParts.isEmpty {
-            fileNegativeLookahead = "(?!.*(" + negativeFileParts.joined(separator: "|") + "))"
-        } else {
-            fileNegativeLookahead = ""
-        }
-
         switch self {
         case .full:
-            guard !excludedBundleIds.isEmpty || !fileNegativeLookahead.isEmpty else { return nil }
-            if !excludedBundleIds.isEmpty {
-                let excludedPattern = excludedBundleIds
-                    .map { NSRegularExpression.escapedPattern(for: $0) }
-                    .joined(separator: "|")
-                return ["^\(fileNegativeLookahead)(?!AppDomain(-(\(excludedPattern))|Group-.*(\(excludedPattern))).*).*$"]
-            } else {
-                return ["^\(fileNegativeLookahead).*$"]
-            }
+            guard !excludedBundleIds.isEmpty else { return nil }
+            let excludedPattern = excludedBundleIds
+                .map { NSRegularExpression.escapedPattern(for: $0) }
+                .joined(separator: "|")
+            return ["^(?!AppDomain(-(\(excludedPattern))|Group-.*(\(excludedPattern))).*).*$"]
 
         case .bareMinimal:
             // Core identity, communication, health, settings. Excludes CameraRoll, Media, and third-party apps.
             return [
-                "^\(fileNegativeLookahead)(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain-com\\.apple\\..*)$"
+                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain-com\\.apple\\..*)$"
             ]
 
         case .communicationAndIdentity:
             // Bare Minimal + popular communication apps (WhatsApp, Signal, Telegram, WeChat)
             return [
-                "^\(fileNegativeLookahead)(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain-com\\.apple\\..*|AppDomain(-Group)?-(net\\.whatsapp\\.WhatsApp|org\\.whispersystems\\.signal|ph\\.telegra\\.Telegraph|com\\.tencent\\.xin).*)$"
+                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|AppDomain-com\\.apple\\..*|AppDomain(-Group)?-(net\\.whatsapp\\.WhatsApp|org\\.whispersystems\\.signal|ph\\.telegra\\.Telegraph|com\\.tencent\\.xin).*)$"
             ]
 
         case .essentialPhotos:
             // Bare Minimal + Camera Roll photos/videos
             return [
-                "^\(fileNegativeLookahead)(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|CameraRollDomain|AppDomain-com\\.apple\\..*)$"
+                "^(HomeDomain|SystemPreferencesDomain|KeychainDomain|RootDomain|ManagedPreferencesDomain|WirelessDomain|HealthDomain|TonesDomain|CameraRollDomain|AppDomain-com\\.apple\\..*)$"
             ]
 
         case .custom:
-            guard !customDomains.isEmpty || !excludedBundleIds.isEmpty || !fileNegativeLookahead.isEmpty else { return nil }
+            guard !customDomains.isEmpty || !excludedBundleIds.isEmpty else { return nil }
             let bundleNegativeLookahead: String
             if !excludedBundleIds.isEmpty {
                 let excludedPattern = excludedBundleIds
@@ -262,12 +169,11 @@ public enum BackupProfileType: String, CaseIterable, Identifiable, Codable, Send
             } else {
                 bundleNegativeLookahead = ""
             }
-            let excludePrefix = "\(fileNegativeLookahead)\(bundleNegativeLookahead)"
             if !customDomains.isEmpty {
                 let domainPattern = customDomains.joined(separator: "|")
-                return ["^\(excludePrefix)(\(domainPattern)).*$"]
+                return ["^\(bundleNegativeLookahead)(\(domainPattern)).*$"]
             }
-            return ["^\(excludePrefix).*$"]
+            return ["^\(bundleNegativeLookahead).*$"]
         }
     }
 }

@@ -144,8 +144,6 @@ final class AppManager: ObservableObject {
                 version: version,
                 dynamicDiskBytes: dynamicBytes,
                 staticDiskBytes: staticBytes,
-                isExcluded: false,
-                isMediaExcludedOnly: false,
                 isSystemApp: isApple
             ))
         }
