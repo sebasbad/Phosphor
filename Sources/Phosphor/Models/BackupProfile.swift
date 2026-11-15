@@ -253,20 +253,21 @@ public enum BackupProfileType: String, CaseIterable, Identifiable, Codable, Send
 
         case .custom:
             guard !customDomains.isEmpty || !excludedBundleIds.isEmpty || !fileNegativeLookahead.isEmpty else { return nil }
-            var patterns: [String] = []
-            if !customDomains.isEmpty {
-                let joined = customDomains.joined(separator: "|")
-                patterns.append("^\(fileNegativeLookahead)(\(joined)).*$")
-            }
+            let bundleNegativeLookahead: String
             if !excludedBundleIds.isEmpty {
                 let excludedPattern = excludedBundleIds
                     .map { NSRegularExpression.escapedPattern(for: $0) }
                     .joined(separator: "|")
-                patterns.append("^\(fileNegativeLookahead)(?!AppDomain(-(\(excludedPattern))|Group-.*(\(excludedPattern))).*).*$")
-            } else if customDomains.isEmpty && !fileNegativeLookahead.isEmpty {
-                patterns.append("^\(fileNegativeLookahead).*$")
+                bundleNegativeLookahead = "(?!AppDomain(-(\(excludedPattern))|Group-.*(\(excludedPattern))).*)"
+            } else {
+                bundleNegativeLookahead = ""
             }
-            return patterns.isEmpty ? nil : patterns
+            let excludePrefix = "\(fileNegativeLookahead)\(bundleNegativeLookahead)"
+            if !customDomains.isEmpty {
+                let domainPattern = customDomains.joined(separator: "|")
+                return ["^\(excludePrefix)(\(domainPattern)).*$"]
+            }
+            return ["^\(excludePrefix).*$"]
         }
     }
 }
