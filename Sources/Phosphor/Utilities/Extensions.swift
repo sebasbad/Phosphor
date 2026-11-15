@@ -105,6 +105,42 @@ extension String {
 // MARK: - FileManager Helpers
 
 extension FileManager {
+    /// Stratified 16-bucket sampling (up to 25 files per bucket) for large hex-bucket backup trees.
+    static func sampledHexBucketSize(bucketPaths: [String], totalBucketFiles: Int) -> UInt64? {
+        guard !bucketPaths.isEmpty, totalBucketFiles > 0 else { return nil }
+        let sampleCount = min(16, bucketPaths.count)
+        var sampleFiles = 0
+        var sampleBytes: UInt64 = 0
+        for i in 0..<sampleCount {
+            if Task.isCancelled { return nil }
+            let idx = (i * bucketPaths.count) / sampleCount
+            let subPath = bucketPaths[idx]
+            if let dp = opendir(subPath) {
+                var inBucket = 0
+                while let ep = readdir(dp), inBucket < 25 {
+                    if ep.pointee.d_type == DT_REG {
+                        let name = withUnsafePointer(to: ep.pointee.d_name) {
+                            $0.withMemoryRebound(to: CChar.self, capacity: Int(ep.pointee.d_namlen) + 1) {
+                                String(cString: $0)
+                            }
+                        }
+                        let fp = (subPath as NSString).appendingPathComponent(name)
+                        var fst = stat()
+                        if stat(fp, &fst) == 0, (fst.st_mode & S_IFMT) == S_IFREG {
+                            sampleFiles += 1
+                            inBucket += 1
+                            sampleBytes += UInt64(max(0, fst.st_size))
+                        }
+                    }
+                }
+                closedir(dp)
+            }
+        }
+        guard sampleFiles > 0 else { return nil }
+        let avg = sampleBytes / UInt64(sampleFiles)
+        return UInt64(totalBucketFiles) * avg
+    }
+
     /// Fast directory child entry count using `getattrlist(ATTR_DIR_ENTRYCOUNT)` on APFS/HFS+,
     /// falling back to `st_nlink - 2` when `getattrlist` is unavailable.
     /// Note: on APFS, `stat().st_nlink` on a directory is not the child file count (it returns 2
@@ -168,38 +204,10 @@ extension FileManager {
                 }
             }
 
-            let sampleCount = min(16, bucketPaths.count)
-            var sampleFiles = 0
-            var sampleBytes: UInt64 = 0
-            for i in 0..<sampleCount {
-                if Task.isCancelled { return 0 }
-                let idx = (i * bucketPaths.count) / sampleCount
-                let subPath = bucketPaths[idx]
-                if let dp = opendir(subPath) {
-                    var inBucket = 0
-                    while let ep = readdir(dp), inBucket < 25 {
-                        if ep.pointee.d_type == DT_REG {
-                            let name = withUnsafePointer(to: ep.pointee.d_name) {
-                                $0.withMemoryRebound(to: CChar.self, capacity: Int(ep.pointee.d_namlen) + 1) {
-                                    String(cString: $0)
-                                }
-                            }
-                            let fp = (subPath as NSString).appendingPathComponent(name)
-                            var fst = stat()
-                            if stat(fp, &fst) == 0, (fst.st_mode & S_IFMT) == S_IFREG {
-                                sampleFiles += 1
-                                inBucket += 1
-                                sampleBytes += UInt64(max(0, fst.st_size))
-                            }
-                        }
-                    }
-                    closedir(dp)
-                }
+            if let sampled = Self.sampledHexBucketSize(bucketPaths: bucketPaths, totalBucketFiles: totalBucketFiles) {
+                return metadataBytes + sampled
             }
-            if sampleFiles > 0 {
-                let avg = sampleBytes / UInt64(sampleFiles)
-                return metadataBytes + (UInt64(totalBucketFiles) * avg)
-            }
+            if Task.isCancelled { return 0 }
         }
 
         var totalSize: UInt64 = 0
