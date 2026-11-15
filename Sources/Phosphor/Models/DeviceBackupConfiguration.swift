@@ -35,6 +35,11 @@ public struct DeviceBackupConfiguration: Codable, Equatable, Sendable {
         "Phosphor.DeviceBackupConfiguration.\(udid)"
     }
 
+    /// Returns true when a persisted configuration exists in UserDefaults for the given device UDID.
+    public static func hasPersistedConfiguration(for udid: String) -> Bool {
+        !udid.isEmpty && UserDefaults.standard.data(forKey: storageKey(for: udid)) != nil
+    }
+
     /// Load saved configuration for a given device UDID, or default to .full.
     public static func load(for udid: String) -> DeviceBackupConfiguration {
         guard !udid.isEmpty,
