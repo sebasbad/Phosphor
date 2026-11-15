@@ -270,6 +270,7 @@ struct BackupListView: View {
                             udid: device.id,
                             incremental: preflightIncremental,
                             preferNetwork: preflightPreferNetwork,
+                            device: device,
                             configuration: preflightConfig
                         )
                     }
