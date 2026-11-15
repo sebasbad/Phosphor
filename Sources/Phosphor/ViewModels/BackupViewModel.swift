@@ -1094,6 +1094,7 @@ final class BackupViewModel: ObservableObject {
     }
 
     private func finishBackupJob(udid: String) {
+        backupActivities[udid]?.observabilityCoordinator?.stopObserving()
         updateActivity(udid: udid) { $0.transition = nil }
         finalizationTasks.removeValue(forKey: udid)?.cancel()
         livenessTasks.removeValue(forKey: udid)?.cancel()
