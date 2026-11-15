@@ -439,13 +439,29 @@ final class BackupScheduler: ObservableObject {
         }
 
         let configuration = DeviceBackupConfiguration.load(for: udid)
+        let activeBackupDir = BackupManager.activeBackupDir
+        var effectiveIncremental = incremental
         if !isResumable {
-            await Task.detached(priority: .utility) {
+            effectiveIncremental = await Task.detached(priority: .utility) {
                 if incremental {
-                    _ = BackupManager.cloneBackupSnapshot(for: udid)
-                } else if BackupManager.hasExistingBackup(for: udid) {
-                    _ = BackupManager.archiveExistingBackup(for: udid)
+                    let existingConfig = DeviceBackupConfiguration.inferFromExistingBackup(
+                        udid: udid,
+                        in: activeBackupDir
+                    )
+                    let isCompatible = existingConfig.map {
+                        configuration.isCompatibleForIncremental(with: $0)
+                    } ?? true
+                    if isCompatible {
+                        _ = BackupManager.cloneBackupSnapshot(for: udid, in: activeBackupDir)
+                        return true
+                    } else {
+                        _ = BackupManager.archiveExistingBackup(for: udid, in: activeBackupDir)
+                        return false
+                    }
+                } else if BackupManager.hasExistingBackup(for: udid, in: activeBackupDir) {
+                    _ = BackupManager.archiveExistingBackup(for: udid, in: activeBackupDir)
                 }
+                return false
             }.value
         }
         if isResumable {
@@ -456,10 +472,10 @@ final class BackupScheduler: ObservableObject {
                 isResume: true,
                 configuration: configuration
             )
-        } else if configuration != DeviceBackupConfiguration() {
+        } else if configuration != DeviceBackupConfiguration() || effectiveIncremental != incremental {
             await backupViewModel.createBackup(
                 udid: udid,
-                incremental: incremental,
+                incremental: effectiveIncremental,
                 preferNetwork: preferNetwork,
                 configuration: configuration
             )
