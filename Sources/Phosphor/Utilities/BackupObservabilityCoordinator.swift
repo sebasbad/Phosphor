@@ -86,6 +86,11 @@ final class BackupObservabilityCoordinator: ObservableObject {
         startSampling()
     }
 
+    /// Stop observing and invalidate the sampling timer
+    func stopObserving() {
+        stopSampling()
+    }
+
     /// Update metrics from backup process
     func updateMetrics(
         phase: BackupPhase,
@@ -164,6 +169,11 @@ final class BackupObservabilityCoordinator: ObservableObject {
             predictiveETA = nil
         }
 
+        if currentPhase == .completed || currentPhase == .cancelled || currentPhase == .failed {
+            stopSampling()
+            return
+        }
+
         // Update stall detection
         updateStallDetection()
 
@@ -216,6 +226,10 @@ final class BackupObservabilityCoordinator: ObservableObject {
 
         currentPhase = newPhase
         phaseStartTime = now
+
+        if newPhase == .completed || newPhase == .cancelled || newPhase == .failed {
+            stopSampling()
+        }
 
         logger.info("Phase transition: \(previousPhase.displayName) → \(newPhase.displayName)\(duration.map { " (\($0.formattedDuration))" } ?? "")")
     }
@@ -326,6 +340,11 @@ final class BackupObservabilityCoordinator: ObservableObject {
     }
 
     private func checkStallAndLiveness() {
+        if currentPhase == .completed || currentPhase == .cancelled || currentPhase == .failed {
+            stopSampling()
+            return
+        }
+
         updateStallDetection()
         updateProcessLiveness()
 
