@@ -98,8 +98,23 @@ final class DeviceCloneService: ObservableObject {
             return false
         }()
 
+        let hasCompleteSourceBackup = !shouldResume && backupManager.backups.contains {
+            !$0.isArchivedSnapshot && ($0.udid == sourceUDID || $0.id == sourceUDID) && $0.healthState == .complete
+        }
+
+        if !shouldResume {
+            await Task.detached(priority: .userInitiated) {
+                if hasCompleteSourceBackup {
+                    _ = BackupManager.cloneBackupSnapshot(for: sourceUDID)
+                } else if BackupManager.hasExistingBackup(for: sourceUDID) {
+                    _ = BackupManager.archiveExistingBackup(for: sourceUDID)
+                }
+            }.value
+        }
+
         await backupViewModel.createBackup(
             udid: sourceUDID,
+            incremental: hasCompleteSourceBackup,
             encrypted: encrypted,
             isResume: shouldResume,
             configuration: DeviceBackupConfiguration.load(for: sourceUDID)
