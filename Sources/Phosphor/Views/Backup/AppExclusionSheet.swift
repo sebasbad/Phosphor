@@ -4,7 +4,6 @@ import SwiftUI
 /// Can be presented as a standalone sheet or embedded inside BackupPreflightSheet.
 struct AppExclusionView: View {
     let udid: String
-    var backupDirectory: String = BackupManager.defaultBackupDir
     @Binding var configuration: DeviceBackupConfiguration
     var onDismiss: () -> Void
 
