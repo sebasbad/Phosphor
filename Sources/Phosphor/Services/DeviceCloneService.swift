@@ -107,25 +107,12 @@ final class DeviceCloneService: ObservableObject {
         let useIncrementalSourceBackup: Bool
         if !shouldResume {
             useIncrementalSourceBackup = await Task.detached(priority: .userInitiated) {
-                if hasCompleteSourceBackup {
-                    let existingConfig = DeviceBackupConfiguration.inferFromExistingBackup(
-                        udid: sourceUDID,
-                        in: activeBackupDir
-                    )
-                    let isCompatible = existingConfig.map {
-                        sourceConfiguration.isCompatibleForIncremental(with: $0)
-                    } ?? true
-                    if isCompatible {
-                        _ = BackupManager.cloneBackupSnapshot(for: sourceUDID, in: activeBackupDir)
-                        return true
-                    } else {
-                        _ = BackupManager.archiveExistingBackup(for: sourceUDID, in: activeBackupDir)
-                        return false
-                    }
-                } else if BackupManager.hasExistingBackup(for: sourceUDID, in: activeBackupDir) {
-                    _ = BackupManager.archiveExistingBackup(for: sourceUDID, in: activeBackupDir)
-                }
-                return false
+                BackupManager.prepareExistingBackupForRun(
+                    udid: sourceUDID,
+                    in: activeBackupDir,
+                    wantsIncremental: hasCompleteSourceBackup,
+                    configuration: sourceConfiguration
+                )
             }.value
         } else {
             useIncrementalSourceBackup = false
